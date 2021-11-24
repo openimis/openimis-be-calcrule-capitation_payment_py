@@ -1,0 +1,1 @@
+# openimis-be-calcrule-capitation_payment_py
