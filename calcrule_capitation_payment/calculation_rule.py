@@ -53,7 +53,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     @classmethod
     def active_for_object(cls, instance, context, type, sub_type):
         return instance.__class__.__name__ == "PaymentPlan" \
-               and context in ["submit", "BatchValuation", "BatchPayment", "IndividualPayment", "IndividualValuation"] \
+               and context in ["BatchValuation", "BatchPayment", "IndividualPayment", "IndividualValuation"] \
                and cls.check_calculation(instance)
 
     @classmethod
