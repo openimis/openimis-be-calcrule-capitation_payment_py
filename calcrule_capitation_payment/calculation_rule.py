@@ -1,14 +1,18 @@
-import operator
-
 from calcrule_capitation_payment.apps import AbsCalculationRule
 from calcrule_capitation_payment.config import CLASS_RULE_PARAM_VALIDATION, \
     DESCRIPTION_CONTRIBUTION_VALUATION, FROM_TO
+from calcrule_capitation_payment.utils import capitation_report_data_for_submit, \
+    get_capitation_region_and_district_codes, check_bill_exist
+from invoice.services import BillService
+from calcrule_capitation_payment.converters import BatchRunToBillConverter, CapitationPaymentToBillItemConverter
 from core.signals import *
 from core import datetime
 from django.contrib.contenttypes.models import ContentType
-from claim.models import Claim, ClaimItem, ClaimService
 from contribution_plan.models import PaymentPlan
 from product.models import Product
+from core.models import User
+from claim_batch.models import BatchRun, CapitationPayment
+from location.models import HealthFacility
 
 
 class CapitationPaymentCalculationRule(AbsCalculationRule):
@@ -72,13 +76,6 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                     if cls.check_calculation(product):
                         match = True
                         break
-        elif class_name == "Claim":
-            #  claim → claim product
-            products = cls.__get_products_from_claim(claim=instance)
-            # take the MAX Product id from item and services
-            if len(products) > 0:
-                product = max(products, key=operator.attrgetter('id'))
-                match = cls.check_calculation(product)
         elif class_name == "Product":
             # if product → paymentPlans
             payment_plans = PaymentPlan.objects.filter(benefit_plan=instance, is_deleted=False)
@@ -90,9 +87,40 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
 
     @classmethod
     def calculate(cls, instance, **kwargs):
+        context = kwargs.get('context', None)
         class_name = instance.__class__.__name__
         if instance.__class__.__name__ == "PaymentPlan":
-            pass
+            if context == "BatchPayment":
+                # get all valuated claims that should be evaluated
+                #  with capitation that matches args (existing function develop in TZ scope)
+                audit_user_id, location_id, period, year = cls._get_batch_run_parameters(**kwargs)
+
+                # process capitation
+                capitation_report_data_for_submit(audit_user_id, location_id, period, year)
+
+                # do the conversion based on those params after generating capitation
+                product = instance.benefit_plan
+                batch_run, capitation_payment, capitation_hf_list, user = \
+                    cls._process_capitation_results(product, **kwargs)
+
+                for chf in capitation_hf_list:
+                    capitation_payments = capitation_payment.filter(health_facility__id=chf['health_facility'])
+                    hf = HealthFacility.objects.get(id=chf['health_facility'])
+                    # take batch run to convert capitation payments into bill per HF
+                    cls.run_convert(
+                        instance=batch_run,
+                        convert_to='Bill',
+                        user=user,
+                        health_facility=hf,
+                        capitation_payments=capitation_payments,
+                        payment_plan=instance
+                    )
+            elif context == "BatchValuation":
+                pass
+            elif context == "IndividualPayment":
+                pass
+            elif context == "IndividualValuation":
+                pass
 
     @classmethod
     def get_linked_class(cls, sender, class_name, **kwargs):
@@ -114,22 +142,79 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
 
     @classmethod
     def convert(cls, instance, convert_to, **kwargs):
-        pass
+        results = {}
+        hf = kwargs.get('health_facility', None)
+        capitation_payments = kwargs.get('capitation_payments', None)
+        payment_plan = kwargs.get('payment_plan', None)
+        if check_bill_exist(instance, hf):
+            convert_from = instance.__class__.__name__
+            if convert_from == "BatchRun":
+                results = cls._convert_capitation_payment(instance, hf, capitation_payments, payment_plan)
+            results['user'] = kwargs.get('user', None)
+            BillService.bill_create(convert_results=results)
+        return results
 
     @classmethod
-    def convert_batch(cls, **kwargs):
-        pass
+    def _get_batch_run_parameters(cls, **kwargs):
+        audit_user_id = kwargs.get('audit_user_id', None)
+        location_id = kwargs.get('location_id', None)
+        period = kwargs.get('period', None)
+        year = kwargs.get('year', None)
+        return audit_user_id, location_id, period, year
 
     @classmethod
-    def __get_products_from_claim(cls, claim):
-        products = []
-        # get the clam product from claim item and claim services
-        for svc_item in [ClaimItem, ClaimService]:
-            claim_details = svc_item.objects \
-                .filter(claim__id=claim.id) \
-                .filter(claim__validity_to__isnull=True) \
-                .filter(validity_to__isnull=True)
-            for cd in claim_details:
-                if cd.product:
-                    products.append(cd.product)
-        return products
+    def _process_capitation_results(cls, product, **kwargs):
+        audit_user_id, location_id, period, year = cls._get_batch_run_parameters(**kwargs)
+        # if this is trigerred by batch_run - take user data from audit_user_id
+        if audit_user_id:
+            user = User.objects.filter(i_user__id=audit_user_id).first()
+
+        # get batch run related to this capitation payment
+        batch_run = BatchRun.objects.filter(run_year=year, run_month=period, location_id=location_id, validity_to__isnull=True)
+        if batch_run:
+           batch_run = batch_run.first()
+           region_code, district_code = get_capitation_region_and_district_codes(location_id)
+           if district_code:
+               capitation_payment = CapitationPayment.objects.filter(
+                   product=product,
+                   validity_to=None,
+                   region_code=region_code,
+                   district_code=district_code,
+                   year=year,
+                   month=period,
+                   total_adjusted__gt=0
+               )
+           else:
+               capitation_payment = CapitationPayment.objects.filter(
+                   product=product,
+                   validity_to=None,
+                   region_code=region_code,
+                   year=year,
+                   month=period,
+                   total_adjusted__gt=0
+               )
+
+           capitation_hf_list = list(capitation_payment.values('health_facility').distinct())
+
+           return batch_run, capitation_payment, capitation_hf_list, user
+
+    @classmethod
+    def _convert_capitation_payment(cls, instance, health_facility, capitation_payments, payment_plan):
+        bill = BatchRunToBillConverter.to_bill_obj(
+            batch_run=instance,
+            health_facility=health_facility,
+            payment_plan=payment_plan
+        )
+        bill_line_items = []
+        for cp in capitation_payments.all():
+            bill_line_item = CapitationPaymentToBillItemConverter.to_bill_line_item_obj(
+                capitation_payment=cp,
+                batch_run=instance,
+                payment_plan=payment_plan
+            )
+            bill_line_items.append(bill_line_item)
+        return {
+            'bill_data': bill,
+            'bill_data_line': bill_line_items,
+            'type_conversion': 'batch run capitation payment - bill'
+        }
