@@ -25,7 +25,6 @@ class BatchRunToBillConverter(object):
 
     @classmethod
     def build_thirdparty(cls, health_facility, bill):
-        # get the first claim because all claims from queryset has the same health facility
         bill["thirdparty_id"] = health_facility.id
         bill['thirdparty_type'] = ContentType.objects.get_for_model(health_facility)
 
