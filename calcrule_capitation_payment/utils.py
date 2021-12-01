@@ -26,7 +26,7 @@ def capitation_report_data_for_submit(audit_user_id, location_id, period, year):
                     .distinct()
         )
 
-    region_id, district_id = get_capitation_region_and_district(location_id)
+    region_id, district_id, region_code, district_code = get_capitation_region_and_district(location_id)
     for product in set(map(lambda x: x['product_id'], capitation_payment_products)):
         params = {
             'region_id': region_id,
@@ -46,32 +46,22 @@ def get_capitation_region_and_district(location_id):
     if not location_id:
         return None, None
     location = Location.objects.get(id=location_id)
+
     region_id = None
-    district_id = None
-
-    if location.type == 'D':
-        district_id = location_id
-        region_id = location.parent.id
-    elif location.type == 'R':
-        region_id = location.id
-
-    return region_id, district_id
-
-
-def get_capitation_region_and_district_codes(location_id):
-    if not location_id:
-        return None, None
-    location = Location.objects.get(id=location_id)
     region_code = None
+    district_id = None
     district_code = None
 
     if location.type == 'D':
-        district_code = location_id
+        district_id = location_id
+        district_code = location.code
+        region_id = location.parent.id
         region_code = location.parent.code
     elif location.type == 'R':
+        region_id = location.id
         region_code = location.code
 
-    return region_code, district_code
+    return region_id, district_id, region_code, district_code
 
 
 def process_capitation_payment_data(params):
@@ -127,7 +117,7 @@ def _execute_capitation_payment_procedure(cursor, procedure, params):
     ))
 
 
-def check_bill_exist(instance, health_facility, **kwargs):
+def check_bill_not_exist(instance, health_facility, **kwargs):
     if instance.__class__.__name__ == "BatchRun":
         batch_run = instance
         content_type = ContentType.objects.get_for_model(batch_run.__class__)
@@ -136,5 +126,5 @@ def check_bill_exist(instance, health_facility, **kwargs):
             subject_id=batch_run.id,
             thirdparty_id=health_facility.id
         )
-        if bills.count() == 0:
+        if bills.exists() == False:
             return True
