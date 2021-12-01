@@ -113,7 +113,8 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                         user=user,
                         health_facility=hf,
                         capitation_payments=capitation_payments,
-                        payment_plan=instance
+                        payment_plan=instance,
+                        context=context
                     )
             elif context == "BatchValuation":
                 pass
@@ -142,16 +143,18 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
 
     @classmethod
     def convert(cls, instance, convert_to, **kwargs):
+        context = kwargs.get('context', None)
         results = {}
-        hf = kwargs.get('health_facility', None)
-        capitation_payments = kwargs.get('capitation_payments', None)
-        payment_plan = kwargs.get('payment_plan', None)
-        if check_bill_exist(instance, hf):
-            convert_from = instance.__class__.__name__
-            if convert_from == "BatchRun":
-                results = cls._convert_capitation_payment(instance, hf, capitation_payments, payment_plan)
-            results['user'] = kwargs.get('user', None)
-            BillService.bill_create(convert_results=results)
+        if context == "BatchPayment":
+            hf = kwargs.get('health_facility', None)
+            capitation_payments = kwargs.get('capitation_payments', None)
+            payment_plan = kwargs.get('payment_plan', None)
+            if check_bill_exist(instance, hf):
+                convert_from = instance.__class__.__name__
+                if convert_from == "BatchRun":
+                    results = cls._convert_capitation_payment(instance, hf, capitation_payments, payment_plan)
+                results['user'] = kwargs.get('user', None)
+                BillService.bill_create(convert_results=results)
         return results
 
     @classmethod
