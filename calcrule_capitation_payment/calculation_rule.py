@@ -54,7 +54,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                 cls.signal_convert_from_to.connect(cls.run_convert, dispatch_uid="on_convert_from_to")
 
     @classmethod
-    def active_for_object(cls, instance, context, type, sub_type):
+    def active_for_object(cls, instance, context, type="account_payable", sub_type="third_party_payment"):
         return instance.__class__.__name__ == "PaymentPlan" \
                and context in ["BatchValuation", "BatchPayment", "IndividualPayment", "IndividualValuation"] \
                and cls.check_calculation(instance)
@@ -98,7 +98,6 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                 #  with capitation that matches args (existing function develop in TZ scope)
                 audit_user_id, location_id, period, year = cls._get_batch_run_parameters(**kwargs)
 
-                # process capitation
                 capitation_report_data_for_submit(audit_user_id, location_id, period, year)
 
                 # do the conversion based on those params after generating capitation
@@ -119,6 +118,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                         payment_plan=instance,
                         context=context
                     )
+                return "conversion finished 'capitation payment'"
             elif context == "BatchValuation":
                 pass
             elif context == "IndividualPayment":
