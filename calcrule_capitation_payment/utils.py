@@ -147,20 +147,18 @@ def generate_capitation(product, start_date, end_date, allocated_contribution ):
         sum_insured_families = 1
         if (product.weight_nb_insured_families > 0):
             sum_insured_families = get_product_sum_policies(product, start_date, end_date)        
+        #get the claim data 
+        sum_claim_adjusted_amount, sum_visist =1
+        if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
+            sum_claim_adjusted_amount, sum_visits = get_product_sum_claim(product, start_date, end_date)
         # select HF concerned with capitation (new HF will come from claims)
-
-
-
-        sum_visits, sum_adjusted_amount =  get_product_claims(product)
         health_facilities = get_prodcut_hf_filter(product, get_product_health_facilites(product))\
             .select_related('location', queryset = Location.objects.filter(validity_to__isnull=True))\
             .select_related('location__parent', queryset = Location.objects.filter(validity_to__isnull=True))
-        sum_claim_adjusted_amount, sum_visist =1
-        if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
-            sum_claim_adjusted_amount, sum_visist = get_product_sum_claim(product, start_date, end_date)
+        # create n capitaiton report for each facilits
         foreach health_facility in health_facilities:
             generate_capitation_health_facility(product, health_facility, allocatied_contribution, sum_insuree, sum_insured_families, 
-            sum_pop, sum_families, sum_claim_adjusted_amount, sum_visist, year, month)
+            sum_pop, sum_families, sum_claim_adjusted_amount, sum_visits, year, month)
 
 
 def get_hf_sum_population(health_facility):
@@ -173,10 +171,12 @@ def get_hf_sum_population(health_facility):
     return pop['sum_pop'], pop['sum_families']
 
 def get_prodcut_hf_filter(product, queryset):
+    # takes all HF if not level config is defined (ie. no filter added)
     if (product.capitation_sublevel_1 is not None or \
         product.capitation_sublevel_2 is not None or \
         product.capitation_sublevel_3 is not None or \
         product.capitation_sublevel_4 is not None  ):
+        # take the HF that match level and sublevel OR level if sublevel is not set in product
         queryset =queryset.filter((Q(HFLevel = product.capitation_level_1) &\
             (Q(HFSubLevel = product.capitation_sublevel_1) | Q(product.capitation_sublevel_1 is None))) |\
         (Q(HFLevel = product.capitation_level_2) &\
@@ -187,86 +187,95 @@ def get_prodcut_hf_filter(product, queryset):
             (Q(HFSubLevel = product.capitation_sublevel_4) | Q(product.capitation_sublevel_4 is None))))
     return queryset
 
-def generate_capitation_health_facility(product, health_facility, allocated_contribution, sum_insuree, sum_insured_familly, 
-            sum_pop, sum_families, adjusted_amount, adjusted_visit, year, month):
+def generate_capitation_health_facility(product, health_facility, allocated_contribution, sum_insurees, sum_insured_families, 
+            sum_pop, sum_families, sum_adjusted_amount, sum_visits, year, month):
     population_matter = product.weight_population > 0 or product.weight_nb_families > 0
     sum_hf_insuree, sum_hf_insured_familly = 0
     sum_hf_pop, sum_hf_families = 0
+    # get the sum of pop
     if population_matter:
-        # get the HF catchement (part of the pop)
         sum_hf_pop, sum_hf_families = get_hf_sum_population(health_facility)
-
+    # get the sum of insuree
     if (product.weight_insured_population > 0):
         sum_hf_insurees =   get_product_sum_insurees(product, start_date, end_date, health_facility)
+    # get the sum of policy/insureed families
     if (product.weight_nb_insured_families > 0):
         sum_hf_insured_families =   get_product_sum_policies(product, start_date, end_date, health_facility)
 
     if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
         sum_hf_claim_adjusted_amount, sum_hf_visist = get_product_sum_claim(product, start_date, end_date, health_facility)
+    # ammont available for all HF capitaiton
     allocated =  allocated_contribution * product.share_contribution /100
-    # Alloacted ammount for the Prodcut
+    # Alloacted ammount for the Prodcut (common for all HF)
     alc_contri_population = allocated * product.weight_population / 100 
     alc_contri_num_families = allocated *  product.weight_nb_families / 100
     alc_contri_ins_population = allocated *  product.weight_insured_population /100
     alc_contri_ins_families = allocated *  product.weight_nb_insured_families /100
     alc_contri_visits = allocated *  product.weight_nb_visits /100
     alc_contri_adjusted_amount =  allocated *  product.weight_adjusted_amount /100
+    # unit  (common for all HF)
+    up_population = alc_contri_population / sum_pop
+    up_num_families = alc_contri_num_families / sum_families
+    up_ins_population = alc_contri_ins_population / sum_insurees
+    up_ins_families = alc_contri_ins_families / sum_insured_families
+    up_visits = alc_contri_visits / sum_visits
+    up_adjusted_amount =  aalc_contri_adjusted_amount /sum_adjusted_amount
+
     # amount for this HF
-    total_population = sum_hf_pop/sum_population * product.weight_population / 100 
-    total_families = sum_hf_families / sum_families *  product.weight_nb_families / 100
-    total_ins_population = sum_hf_insurees / sum_insurees *  product.weight_insured_population /100
-    total_ins_families = sum_hf_insured_families / sum_families *  product.weight_nb_insured_families /100
-    total_claims = sum_hf_visist / sum_visist *  product.weight_nb_visist /100
-    total_adjusted = sum_hf_adjusted_amount / sum_adjusted_amount *  product.weight_nb_insured_families /100
+    total_population = sum_hf_pop * up_population
+    total_families = sum_hf_families * up_num_families
+    total_ins_population = sum_hf_insurees * up_ins_population
+    total_ins_families = sum_hf_insured_families * up_ins_families
+    total_claims = sum_hf_visist * up_visits
+    total_adjusted = sum_hf_adjusted_amount * up_adjusted_amount
 
-    up_population = allocated * product.weight_population / 100 
-    up_num_families = allocated *  product.weight_nb_families / 100
-    up_ins_population = allocated *  product.weight_insured_population /100
-    up_ins_families = allocated *  product.weight_nb_insured_families /100
-    up_visits = allocated *  product.weight_nb_visist /100
-    up_adjusted_amount =  allocated *  product.weight_adjusted_amount /100
+    # overall total
+    payment_cathment = total_population + total_families\
+                    +total_ins_population + total_ins_families
 
-    Capitation = new CapitationPayment( year = year,\
-                                        month = month,\
-                                        health_facility = health_facility,\
-                                        region_code = health_facility.location.parent.code,\
-                                        region_name = health_facility.location.parent.code,\
-                                        distric_code = health_facility.location.code,
-                                        district_name = health_facility.location.code,\
-                                        health_facility_code = health_facility.code,\
-                                        health_facility_name = health_facility.name,\
-                                        hf_level = health_facility.level,\
-                                        hf_sublevel = health_facility.sublevel,\
-                                        total_population = total_population,\
-                                        total_families = total_families,\
-                                        total_insured_insuree = total_insured_insuree,\
-                                        total_insured_families = total_insured_families,\
-                                        total_claims = total_claims,\
-                                        total_adjusted = total_adjusted ,\
-                                        alc_contri_population = alc_contri_population,\
-                                        alc_contri_num_families = alc_contri_num_families,\
-                                        alc_contri_ins_population = alc_contri_ins_population,\
-                                        alc_contri_ins_families = alc_contri_ins_families,\
-                                        payment_cathment = total_population + total_families\
-                                                         +total_ins_population + total_ins_families,\
-                                        up_population = up_population,\
-                                        up_num_families=up_num_families,\
-                                        up_ins_population=up_ins_population,\
-                                        up_ins_families=up_ins_families,\
-                                        up_visits=up_visits,\
-                                        up_adjusted_amount=up_adjusted_amount)
-    # TODO create bill with Capitation in the json_ext_details                    
+    # Create the CapitationPayment so it can be retrieved from the invocie to generate the legacy reports
+    if payment_cathment > 0 :
+        Capitation = new CapitationPayment( year = year,\
+                        month = month,\
+                        health_facility = health_facility,\
+                        region_code = health_facility.location.parent.code,\
+                        region_name = health_facility.location.parent.code,\
+                        distric_code = health_facility.location.code,
+                        district_name = health_facility.location.code,\
+                        health_facility_code = health_facility.code,\
+                        health_facility_name = health_facility.name,\
+                        hf_level = health_facility.level,\
+                        hf_sublevel = health_facility.sublevel,\
+                        total_population = total_population,\
+                        total_families = total_families,\
+                        total_insured_insuree = total_insured_insuree,\
+                        total_insured_families = total_insured_families,\
+                        total_claims = total_claims,\
+                        total_adjusted = total_adjusted ,\
+                        alc_contri_population = alc_contri_population,\
+                        alc_contri_num_families = alc_contri_num_families,\
+                        alc_contri_ins_population = alc_contri_ins_population,\
+                        alc_contri_ins_families = alc_contri_ins_families,\
+                        payment_cathment = total_population + total_families\
+                                            +total_ins_population + total_ins_families,\
+                        up_population = up_population,\
+                        up_num_families=up_num_families,\
+                        up_ins_population=up_ins_population,\
+                        up_ins_families=up_ins_families,\
+                        up_visits=up_visits,\
+                        up_adjusted_amount=up_adjusted_amount)
+        # TODO create bill with Capitation in the json_ext_details                    
                                                   
                                             
                                         )
 
 
 
-# below can be mode to Product Module
+# below might  be move to Product Module
 
  def get_product_districts(product):
     districts = Location.objects.filer(validity_to__isnull=True)
-     # if cls null, it means all 
+     # if location null, it means all 
     if product.location is None:
         districts = districts.all()
     elif product.location.type = 'D':
@@ -304,6 +313,7 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
                     .filter(policy_expiry_date_gte=start_date  )\
                     .filter(policy_effective_date_lte=start_date  )\
                     .filter(policy_product=product )
+        # filter based on catchement if HF is defined
         if health_facility is None:
             insurees = insurees.annotate(sum=COUNT(id)/100)
         else:
@@ -322,6 +332,7 @@ def get_product_sum_policies(product, start_date, end_date, health_facility = No
                     .filter(expiry_date_gte=start_date  )\
                     .filter(effective_date_lte=start_date  )\
                     .filter(product=product )
+        # filter based on catchement if HF is defined
         if health_facility is None:
                 policies = policies.annotate(sum=COUNT(id)/100)
         else:
@@ -343,20 +354,23 @@ def get_product_sum_population(product):
         return 0, 0
 
 def get_product_sum_claim(product, start_date, end_date, health_facility = None):
-    # ceiling_interpretation 
+    # make the items querysets
     items = ClaimsItems.objects.filter(validity_to__isnull=True)\
         .filter(product = product)\
         .filter(claim__processed_date__lte=end_date)\
         .filter(claim__processed_date__gt=start_date)
+    # make the services querysets
     services = ClaimsServices.objects.filter(validity_to__isnull=True)\
         .filter(product = product)\
         .filter(claim__processed_date__lte=end_date)\
         .filter(claim__processed_date__gt=start_date)
+    # get the number of claims concened by the Items and services queryset
     if health_facility is not None:
         items = items.filter(claim__health_facility = health_facility)
         services = services.filter(claim__health_facility = health_facility)
-    # count the discting claims
+    # count the distinct claims
     visits = items.only('claim').union(services.only('claim')).annotate(sum=COUNT(claim))
+    # addup all adjusted_amount
     items = items.annotate(sum=SUM('adjusted_amount'))\
     services = services.annotate(sum=SUM('adjusted_amount'))
 
