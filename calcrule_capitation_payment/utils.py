@@ -157,6 +157,7 @@ def generate_capitation(product, start_date, end_date, allocated_contribution ):
             .select_related('location__parent', queryset = Location.objects.filter(validity_to__isnull=True))
         # create n capitaiton report for each facilits
         foreach health_facility in health_facilities:
+            # we might need to create the capitation report here with all the commion fields and run a class method generate_capitation_health_facility(pdroduct,hf)
             generate_capitation_health_facility(product, health_facility, allocatied_contribution, sum_insuree, sum_insured_families, 
             sum_pop, sum_families, sum_claim_adjusted_amount, sum_visits, year, month)
 
@@ -187,23 +188,25 @@ def get_prodcut_hf_filter(product, queryset):
             (Q(HFSubLevel = product.capitation_sublevel_4) | Q(product.capitation_sublevel_4 is None))))
     return queryset
 
+
 def generate_capitation_health_facility(product, health_facility, allocated_contribution, sum_insurees, sum_insured_families, 
             sum_pop, sum_families, sum_adjusted_amount, sum_visits, year, month):
     population_matter = product.weight_population > 0 or product.weight_nb_families > 0
-    sum_hf_insuree, sum_hf_insured_familly = 0
     sum_hf_pop, sum_hf_families = 0
     # get the sum of pop
     if population_matter:
         sum_hf_pop, sum_hf_families = get_hf_sum_population(health_facility)
     # get the sum of insuree
+    sum_hf_insurees = 0
     if (product.weight_insured_population > 0):
         sum_hf_insurees =   get_product_sum_insurees(product, start_date, end_date, health_facility)
     # get the sum of policy/insureed families
+    sum_hf_insured_families = 0
     if (product.weight_nb_insured_families > 0):
         sum_hf_insured_families =   get_product_sum_policies(product, start_date, end_date, health_facility)
-
+    sum_hf_claim_adjusted_amount, sum_hf_visits = 0
     if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
-        sum_hf_claim_adjusted_amount, sum_hf_visist = get_product_sum_claim(product, start_date, end_date, health_facility)
+        sum_hf_claim_adjusted_amount, sum_hf_visits = get_product_sum_claim(product, start_date, end_date, health_facility)
     # ammont available for all HF capitaiton
     allocated =  allocated_contribution * product.share_contribution /100
     # Alloacted ammount for the Prodcut (common for all HF)
@@ -226,7 +229,7 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
     total_families = sum_hf_families * up_num_families
     total_ins_population = sum_hf_insurees * up_ins_population
     total_ins_families = sum_hf_insured_families * up_ins_families
-    total_claims = sum_hf_visist * up_visits
+    total_claims = sum_hf_visits * up_visits
     total_adjusted = sum_hf_adjusted_amount * up_adjusted_amount
 
     # overall total
