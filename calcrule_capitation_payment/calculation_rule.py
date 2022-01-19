@@ -2,7 +2,7 @@ from calcrule_capitation_payment.apps import AbsCalculationRule
 from calcrule_capitation_payment.config import CLASS_RULE_PARAM_VALIDATION, \
     DESCRIPTION_CONTRIBUTION_VALUATION, FROM_TO
 from calcrule_capitation_payment.utils import capitation_report_data_for_submit, \
-    get_capitation_region_and_district, check_bill_not_exist
+    get_capitation_region_and_district, check_bill_not_exist, generate_capitation
 from django.core.exceptions import ValidationError
 from gettext import gettext as _
 from invoice.services import BillService
@@ -96,12 +96,21 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
             if context == "BatchPayment":
                 # get all valuated claims that should be evaluated
                 #  with capitation that matches args (existing function develop in TZ scope)
-                audit_user_id, location_id, period, year = cls._get_batch_run_parameters(**kwargs)
+                audit_user_id, product_id, period, year, batch_run, work_data = cls._get_batch_run_parameters(**kwargs)
+                # retrieving the allocated contribution from work_data
+                allocated_contribution = work_data.allocated_contribution if not null else 0
+                #get_product
+                product = instance.benefit_plan
+                # generating capitation report
+                generate_capitation(product, start_date, end_date, allocated_contribution )
 
-                capitation_report_data_for_submit(audit_user_id, location_id, period, year)
+
+
+
+
 
                 # do the conversion based on those params after generating capitation
-                product = instance.benefit_plan
+                
                 batch_run, capitation_payment, capitation_hf_list, user = \
                     cls._process_capitation_results(product, **kwargs)
 
@@ -162,11 +171,14 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
 
     @classmethod
     def _get_batch_run_parameters(cls, **kwargs):
+        # TODO: test Batch run ID, update end_date, startdate
         audit_user_id = kwargs.get('audit_user_id', None)
-        location_id = kwargs.get('location_id', None)
-        period = kwargs.get('period', None)
-        year = kwargs.get('year', None)
-        return audit_user_id, location_id, period, year
+        product_id = kwargs.get('product_id', None)
+        start_date = kwargs.get('start_date', None)
+        end_date = kwargs.get('end_date', None)
+        batch_run = kwargs.get('batch_run', None)
+        work_data = kwargs.get('work_data', None)
+        return audit_user_id, product_id, period, year, batch_run, work_data
 
     @classmethod
     def _process_capitation_results(cls, product, **kwargs):

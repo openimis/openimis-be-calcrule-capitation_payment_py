@@ -9,7 +9,7 @@ from location.models import Location
 
 logger = logging.getLogger(__name__)
 
-
+@deprecated
 def capitation_report_data_for_submit(audit_user_id, location_id, period, year):
     # moved from claim_batch module
     capitation_payment_products = []
@@ -41,7 +41,7 @@ def capitation_report_data_for_submit(audit_user_id, location_id, period, year):
         else:
             logger.debug(F"Capitation payment data for {params} already exists")
 
-
+@deprecated
 def get_capitation_region_and_district(location_id):
     if not location_id:
         return None, None
@@ -63,14 +63,14 @@ def get_capitation_region_and_district(location_id):
 
     return region_id, district_id, region_code, district_code
 
-
+@deprecated
 def process_capitation_payment_data(params):
     with connection.cursor() as cur:
         # HFLevel based on
         # https://github.com/openimis/web_app_vb/blob/2492c20d8959e39775a2dd4013d2fda8feffd01c/IMIS_BL/HealthFacilityBL.vb#L77
         _execute_capitation_payment_procedure(cur, 'uspCreateCapitationPaymentReportData', params)
 
-
+@deprecated
 def get_commision_payment_report_data(params):
     with connection.cursor() as cur:
         # HFLevel based on
@@ -90,7 +90,7 @@ def get_commision_payment_report_data(params):
                 next = cur.nextset()
     return data
 
-
+@deprecated
 def _execute_capitation_payment_procedure(cursor, procedure, params):
     sql = F"""\
                 DECLARE @HF AS xAttributeV;
@@ -128,3 +128,238 @@ def check_bill_not_exist(instance, health_facility, **kwargs):
         )
         if bills.exists() == False:
             return True
+
+def generate_capitation(product, start_date, end_date, allocated_contribution ):
+    population_matter = product.weight_population > 0 or product.weight_nb_families > 0
+    year = end_date.year
+    month = end_date.month
+    if ( product.weight_insured_population > 0 or product.weight_nb_insured_families > 0 or  population_matter ):
+        # get location (district) linked to the product --> to be 
+        sum_pop, sum_families = 1
+        if are_population_matter:
+            sum_pop, sum_families = get_product_sum_population(product)
+        sum_insurees = 1
+        # get the total number of insuree
+        if (product.weight_insured_population > 0):
+            insuree =  get_product_sum_insurees(product, start_date, end_date)
+        sum_insured_family = 1
+        # get the total number of insured family
+        sum_insured_families = 1
+        if (product.weight_nb_insured_families > 0):
+            sum_insured_families = get_product_sum_policies(product, start_date, end_date)        
+        # select HF concerned with capitation (new HF will come from claims)
+
+
+
+        sum_visits, sum_adjusted_amount =  get_product_claims(product)
+        health_facilities = get_prodcut_hf_filter(product, get_product_health_facilites(product))\
+            .select_related('location', queryset = Location.objects.filter(validity_to__isnull=True))\
+            .select_related('location__parent', queryset = Location.objects.filter(validity_to__isnull=True))
+        sum_claim_adjusted_amount, sum_visist =1
+        if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
+            sum_claim_adjusted_amount, sum_visist = get_product_sum_claim(product, start_date, end_date)
+        foreach health_facility in health_facilities:
+            generate_capitation_health_facility(product, health_facility, allocatied_contribution, sum_insuree, sum_insured_families, 
+            sum_pop, sum_families, sum_claim_adjusted_amount, sum_visist, year, month)
+
+
+def get_hf_sum_population(health_facility):
+    pop = Location.objects.filter(validity_to__isnull=True)\
+            .filter(catchments__health_facility = health_facility)\
+            .filter(catchments__validity_to__isnull=True)\
+            .annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100)
+            .annotate(sum_families=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100)
+
+    return pop['sum_pop'], pop['sum_families']
+
+def get_prodcut_hf_filter(product, queryset):
+    if (product.capitation_sublevel_1 is not None or \
+        product.capitation_sublevel_2 is not None or \
+        product.capitation_sublevel_3 is not None or \
+        product.capitation_sublevel_4 is not None  ):
+        queryset =queryset.filter((Q(HFLevel = product.capitation_level_1) &\
+            (Q(HFSubLevel = product.capitation_sublevel_1) | Q(product.capitation_sublevel_1 is None))) |\
+        (Q(HFLevel = product.capitation_level_2) &\
+            (Q(HFSubLevel = product.capitation_sublevel_2) | Q(product.capitation_sublevel_2 is None))) |\
+        (Q(HFLevel = product.capitation_level_3) &\
+            (Q(HFSubLevel = product.capitation_sublevel_3) | Q(product.capitation_sublevel_3 is None))) |\
+        (Q(HFLevel = product.capitation_level_4) &\
+            (Q(HFSubLevel = product.capitation_sublevel_4) | Q(product.capitation_sublevel_4 is None))))
+    return queryset
+
+def generate_capitation_health_facility(product, health_facility, allocated_contribution, sum_insuree, sum_insured_familly, 
+            sum_pop, sum_families, adjusted_amount, adjusted_visit, year, month):
+    population_matter = product.weight_population > 0 or product.weight_nb_families > 0
+    sum_hf_insuree, sum_hf_insured_familly = 0
+    sum_hf_pop, sum_hf_families = 0
+    if population_matter:
+        # get the HF catchement (part of the pop)
+        sum_hf_pop, sum_hf_families = get_hf_sum_population(health_facility)
+
+    if (product.weight_insured_population > 0):
+        sum_hf_insurees =   get_product_sum_insurees(product, start_date, end_date, health_facility)
+    if (product.weight_nb_insured_families > 0):
+        sum_hf_insured_families =   get_product_sum_policies(product, start_date, end_date, health_facility)
+
+    if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
+        sum_hf_claim_adjusted_amount, sum_hf_visist = get_product_sum_claim(product, start_date, end_date, health_facility)
+    allocated =  allocated_contribution * product.share_contribution /100
+    # Alloacted ammount for the Prodcut
+    alc_contri_population = allocated * product.weight_population / 100 
+    alc_contri_num_families = allocated *  product.weight_nb_families / 100
+    alc_contri_ins_population = allocated *  product.weight_insured_population /100
+    alc_contri_ins_families = allocated *  product.weight_nb_insured_families /100
+    alc_contri_visits = allocated *  product.weight_nb_visits /100
+    alc_contri_adjusted_amount =  allocated *  product.weight_adjusted_amount /100
+    # amount for this HF
+    total_population = sum_hf_pop/sum_population * product.weight_population / 100 
+    total_families = sum_hf_families / sum_families *  product.weight_nb_families / 100
+    total_ins_population = sum_hf_insurees / sum_insurees *  product.weight_insured_population /100
+    total_ins_families = sum_hf_insured_families / sum_families *  product.weight_nb_insured_families /100
+    total_claims = sum_hf_visist / sum_visist *  product.weight_nb_visist /100
+    total_adjusted = sum_hf_adjusted_amount / sum_adjusted_amount *  product.weight_nb_insured_families /100
+
+    up_population = allocated * product.weight_population / 100 
+    up_num_families = allocated *  product.weight_nb_families / 100
+    up_ins_population = allocated *  product.weight_insured_population /100
+    up_ins_families = allocated *  product.weight_nb_insured_families /100
+    up_visits = allocated *  product.weight_nb_visist /100
+    up_adjusted_amount =  allocated *  product.weight_adjusted_amount /100
+
+    Capitation = new CapitationPayment( year = year,\
+                                        month = month,\
+                                        health_facility = health_facility,\
+                                        region_code = health_facility.location.parent.code,\
+                                        region_name = health_facility.location.parent.code,\
+                                        distric_code = health_facility.location.code,
+                                        district_name = health_facility.location.code,\
+                                        health_facility_code = health_facility.code,\
+                                        health_facility_name = health_facility.name,\
+                                        hf_level = health_facility.level,\
+                                        hf_sublevel = health_facility.sublevel,\
+                                        total_population = total_population,\
+                                        total_families = total_families,\
+                                        total_insured_insuree = total_insured_insuree,\
+                                        total_insured_families = total_insured_families,\
+                                        total_claims = total_claims,\
+                                        total_adjusted = total_adjusted ,\
+                                        alc_contri_population = alc_contri_population,\
+                                        alc_contri_num_families = alc_contri_num_families,\
+                                        alc_contri_ins_population = alc_contri_ins_population,\
+                                        alc_contri_ins_families = alc_contri_ins_families,\
+                                        payment_cathment = total_population + total_families\
+                                                         +total_ins_population + total_ins_families,\
+                                        up_population = up_population,\
+                                        up_num_families=up_num_families,\
+                                        up_ins_population=up_ins_population,\
+                                        up_ins_families=up_ins_families,\
+                                        up_visits=up_visits,\
+                                        up_adjusted_amount=up_adjusted_amount)
+    # TODO create bill with Capitation in the json_ext_details                    
+                                                  
+                                            
+                                        )
+
+
+
+# below can be mode to Product Module
+
+ def get_product_districts(product):
+    districts = Location.objects.filer(validity_to__isnull=True)
+     # if cls null, it means all 
+    if product.location is None:
+        districts = districts.all()
+    elif product.location.type = 'D':
+        # ideally we should just return the object but the caller will expect a queryset not an object
+        districts = districts.filter(id=product.location.id )
+    elif product.location.type == 'R':
+         districts = districts.filter(parent_id=product.location.id )
+    else:
+        return None
+    return districts
+
+ def get_product_villages(product):
+    districts = get_product_districts(product)
+    villages = None
+    if districts is not None:
+        villages = Location.objects.filter(validity_to__isnull=True)\
+                .filter(parent__parent__in=districts)
+    return villages
+ 
+ def get_product_health_facilites(product):
+    districts  = get_districts(product)
+    if district is not None:
+        health_facilities = get_prodcut_hf_filter(product, HealthFacility.objects.filter(validity_to__isnull=True)\
+            .filter(location__in = districts))
+        return health_facilities
+    else:
+        return None
+
+
+ def get_product_sum_insurees(product, start_date, end_date, health_facility = None):
+    villages = get_product_villages(product, start_date, end_date)
+    if villages is not None:
+        insurees  = InsureePolicy.objects.filter(validity_to__isnull=True)\
+                    .filter(family__location__in= villages)\
+                    .filter(policy_expiry_date_gte=start_date  )\
+                    .filter(policy_effective_date_lte=start_date  )\
+                    .filter(policy_product=product )
+        if health_facility is None:
+            insurees = insurees.annotate(sum=COUNT(id)/100)
+        else:
+            insurees = insurees.filter(policy__family__location__catchments__health_facility = health_facility)\
+                .filter(policy__family__location__catchments__validity_to__isnull=True)\
+                .annotate(sum=F('family__location__catchments__catchement') * COUNT(id) /100 )['sum']
+        return insurees['sum']
+    else:
+        return 0
+
+def get_product_sum_policies(product, start_date, end_date, health_facility = None):
+    villages = get_product_villages(product)
+    if villages is not None:
+        policies  = Policy.objects.filter(validity_to__isnull=True)\
+                    .filter(family__location__in= villages)\
+                    .filter(expiry_date_gte=start_date  )\
+                    .filter(effective_date_lte=start_date  )\
+                    .filter(product=product )
+        if health_facility is None:
+                policies = policies.annotate(sum=COUNT(id)/100)
+        else:
+            policies = policies.filter(family__location__catchments__health_facility = health_facility)\
+                .filter(family__location__catchments__validity_to__isnull=True)\
+                .annotate(sum=F('family__location__catchments__catchement') * COUNT(id) /100 )
+        return policies['sum']
+    else:
+        return 0
+
+def get_product_sum_population(product):
+    villages = get_product_villages(product)
+    if villages is not None:    
+        pop = villages.annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population')))
+                .annotate(sum_families=SUM((F('families'))))
+
+        return pop['sum_pop'], pop['sum_families']
+    else:
+        return 0, 0
+
+def get_product_sum_claim(product, start_date, end_date, health_facility = None):
+    # ceiling_interpretation 
+    items = ClaimsItems.objects.filter(validity_to__isnull=True)\
+        .filter(product = product)\
+        .filter(claim__processed_date__lte=end_date)\
+        .filter(claim__processed_date__gt=start_date)
+    services = ClaimsServices.objects.filter(validity_to__isnull=True)\
+        .filter(product = product)\
+        .filter(claim__processed_date__lte=end_date)\
+        .filter(claim__processed_date__gt=start_date)
+    if health_facility is not None:
+        items = items.filter(claim__health_facility = health_facility)
+        services = services.filter(claim__health_facility = health_facility)
+    # count the discting claims
+    visits = items.only('claim').union(services.only('claim')).annotate(sum=COUNT(claim))
+    items = items.annotate(sum=SUM('adjusted_amount'))\
+    services = services.annotate(sum=SUM('adjusted_amount'))
+
+    return items['sum'] + services['sum'], visits['sum']
+
+        
