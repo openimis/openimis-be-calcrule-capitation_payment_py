@@ -1,11 +1,12 @@
 import logging
 from claim.models import ClaimItem, Claim, ClaimService
-from django.db import connection
+from django.db import connection, Q, SUM, COUNT, F
 from django.db.models import Value
 from django.db.models.functions import Coalesce
 from django.contrib.contenttypes.models import ContentType
 from invoice.models import Bill
 from location.models import Location
+from .models import CapitationPayment
 
 logger = logging.getLogger(__name__)
 
@@ -136,13 +137,12 @@ def generate_capitation(product, start_date, end_date, allocated_contribution ):
     if ( product.weight_insured_population > 0 or product.weight_nb_insured_families > 0 or  population_matter ):
         # get location (district) linked to the product --> to be 
         sum_pop, sum_families = 1
-        if are_population_matter:
+        if population_matter:
             sum_pop, sum_families = get_product_sum_population(product)
         sum_insurees = 1
         # get the total number of insuree
         if (product.weight_insured_population > 0):
-            insuree =  get_product_sum_insurees(product, start_date, end_date)
-        sum_insured_family = 1
+            sum_insurees =  get_product_sum_insurees(product, start_date, end_date)
         # get the total number of insured family
         sum_insured_families = 1
         if (product.weight_nb_insured_families > 0):
@@ -151,27 +151,30 @@ def generate_capitation(product, start_date, end_date, allocated_contribution ):
         sum_claim_adjusted_amount, sum_visist =1
         if product.weight_nb_visits >0 or product.weight_adjusted_amount >0:
             sum_claim_adjusted_amount, sum_visits = get_product_sum_claim(product, start_date, end_date)
-        # select HF concerned with capitation (new HF will come from claims)
-        health_facilities = get_prodcut_hf_filter(product, get_product_health_facilites(product))\
+        # select HF concerned with capitation within the product location (new HF will come from claims)
+
+        health_facilities = get_product_hf_filter(product, get_capitation_health_facilites(product))\
             .select_related('location', queryset = Location.objects.filter(validity_to__isnull=True))\
             .select_related('location__parent', queryset = Location.objects.filter(validity_to__isnull=True))
+
         # create n capitaiton report for each facilits
-        foreach health_facility in health_facilities:
+        for health_facility in health_facilities:
             # we might need to create the capitation report here with all the commion fields and run a class method generate_capitation_health_facility(pdroduct,hf)
-            generate_capitation_health_facility(product, health_facility, allocatied_contribution, sum_insuree, sum_insured_families, 
+            generate_capitation_health_facility(product, health_facility, allocated_contribution, sum_insurees, sum_insured_families, 
             sum_pop, sum_families, sum_claim_adjusted_amount, sum_visits, year, month)
+
 
 
 def get_hf_sum_population(health_facility):
     pop = Location.objects.filter(validity_to__isnull=True)\
             .filter(catchments__health_facility = health_facility)\
             .filter(catchments__validity_to__isnull=True)\
-            .annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100)
-            .annotate(sum_families=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100)
+            .annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100))\
+            .annotate(sum_families=SUM((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100))
 
     return pop['sum_pop'], pop['sum_families']
 
-def get_prodcut_hf_filter(product, queryset):
+def get_product_hf_filter(product, queryset):
     # takes all HF if not level config is defined (ie. no filter added)
     if (product.capitation_sublevel_1 is not None or \
         product.capitation_sublevel_2 is not None or \
@@ -238,7 +241,7 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
 
     # Create the CapitationPayment so it can be retrieved from the invocie to generate the legacy reports
     if payment_cathment > 0 :
-        Capitation = new CapitationPayment( year = year,\
+        Capitation = CapitationPayment( year = year,\
                         month = month,\
                         health_facility = health_facility,\
                         region_code = health_facility.location.parent.code,\
@@ -251,8 +254,8 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
                         hf_sublevel = health_facility.sublevel,\
                         total_population = total_population,\
                         total_families = total_families,\
-                        total_insured_insuree = total_insured_insuree,\
-                        total_insured_families = total_insured_families,\
+                        total_insured_insuree = total_ins_population,\
+                        total_insured_families = total_ins_families,\
                         total_claims = total_claims,\
                         total_adjusted = total_adjusted ,\
                         alc_contri_population = alc_contri_population,\
@@ -269,14 +272,13 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
                         up_adjusted_amount=up_adjusted_amount)
         # TODO create bill with Capitation in the json_ext_details                    
                                                   
-                                            
-                                        )
+                                
 
 
 
 # below might  be move to Product Module
 
- def get_product_districts(product):
+def get_product_districts(product):
     districts = Location.objects.filer(validity_to__isnull=True)
      # if location null, it means all 
     if product.location is None:
@@ -290,7 +292,7 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
         return None
     return districts
 
- def get_product_villages(product):
+def get_product_villages(product):
     districts = get_product_districts(product)
     villages = None
     if districts is not None:
@@ -298,17 +300,27 @@ def generate_capitation_health_facility(product, health_facility, allocated_cont
                 .filter(parent__parent__in=districts)
     return villages
  
- def get_product_health_facilites(product):
-    districts  = get_districts(product)
-    if district is not None:
-        health_facilities = get_prodcut_hf_filter(product, HealthFacility.objects.filter(validity_to__isnull=True)\
-            .filter(location__in = districts))
+def get_capitation_health_facilites(product, start_date, end_date):
+    districts  = get_product_districts(product)
+    health_facilities_districts =  HealthFacility.objects.filter(validity_to__isnull=True)\
+            .filter(location__in = districts)
+    # might need to add the items / services status
+    health_facilities_off_districts = HealthFacility.objects.filter(validity_to__isnull=True)\
+            .filter(claims__validity_to__isnull=True)\
+            .filter(claims__processed_stamp__lte = end_date)\
+            .filter(claims__processed_stamp__gt = start_date)\
+            .filter((Q(claims__items__product=product) & Q(claims__items__validity_to__isnull=True))\
+                | (Q(claims__services__product=product) & Q(claims__services__validity_to__isnull=True)))           
+
+    if health_facilities is not None:
+        health_facilities = get_prodcut_hf_filter(product,  health_facilities_districts\
+            .union(health_facilities_off_districts))  
         return health_facilities
     else:
         return None
 
 
- def get_product_sum_insurees(product, start_date, end_date, health_facility = None):
+def get_product_sum_insurees(product, start_date, end_date, health_facility = None):
     villages = get_product_villages(product, start_date, end_date)
     if villages is not None:
         insurees  = InsureePolicy.objects.filter(validity_to__isnull=True)\
@@ -349,7 +361,7 @@ def get_product_sum_policies(product, start_date, end_date, health_facility = No
 def get_product_sum_population(product):
     villages = get_product_villages(product)
     if villages is not None:    
-        pop = villages.annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population')))
+        pop = villages.annotate(sum_pop=SUM((F('male_population')+F('female_population')+F('other_population'))))\
                 .annotate(sum_families=SUM((F('families'))))
 
         return pop['sum_pop'], pop['sum_families']
@@ -372,9 +384,9 @@ def get_product_sum_claim(product, start_date, end_date, health_facility = None)
         items = items.filter(claim__health_facility = health_facility)
         services = services.filter(claim__health_facility = health_facility)
     # count the distinct claims
-    visits = items.only('claim').union(services.only('claim')).annotate(sum=COUNT(claim))
+    visits = items.only('claim').union(services.only('claim')).annotate(sum=COUNT('claim'))
     # addup all adjusted_amount
-    items = items.annotate(sum=SUM('adjusted_amount'))\
+    items = items.annotate(sum=SUM('adjusted_amount'))
     services = services.annotate(sum=SUM('adjusted_amount'))
 
     return items['sum'] + services['sum'], visits['sum']
