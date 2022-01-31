@@ -1,6 +1,12 @@
+import uuid
 from django.db import models
 
-# Create your models here.
+from core import models as core_models
+from location.models import HealthFacility
+from product.models import Product
+
+
+# TODO no tables
 class CapitationPayment(core_models.VersionedModel):
     id = models.AutoField(db_column='CapitationPaymentID', primary_key=True)
     uuid = models.CharField(db_column='CapitationPaymentUUID', max_length=36, default=uuid.uuid4, unique=True)
@@ -84,5 +90,5 @@ class CapitationPayment(core_models.VersionedModel):
     total_adjusted = models.DecimalField(
         db_column='TotalAdjusted', max_digits=18, decimal_places=2, blank=True, null=True, default=0)
 
-
-###TODO no tables
+    class Meta:
+        db_table = 'tblCapitationPayment'
