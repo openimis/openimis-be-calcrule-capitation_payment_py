@@ -261,7 +261,7 @@ def generate_capitation_health_facility(
     payment_cathment = total_population + total_families + total_ins_population + total_ins_families
 
     # Create the CapitationPayment so it can be retrieved from the invoice to generate the legacy reports
-    if payment_cathment >= 0:
+    if payment_cathment > 0:
         capitation = \
             CapitationPayment(
                 year=year,

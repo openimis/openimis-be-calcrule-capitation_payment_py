@@ -199,7 +199,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
             region_code=region_code,
             year=end_date.year,
             month=end_date.month,
-            total_adjusted__gte=0
+            total_adjusted__gt=0
         )
         if district_code:
             capitation_payment = capitation_payment.filter(
