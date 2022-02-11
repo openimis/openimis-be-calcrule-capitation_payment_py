@@ -7,15 +7,14 @@ from django.core.exceptions import ValidationError
 from gettext import gettext as _
 from invoice.services import BillService
 from calcrule_capitation_payment.converters import BatchRunToBillConverter, CapitationPaymentToBillItemConverter
+from calcrule_capitation_payment.models import CapitationPayment
 from core.signals import *
 from core import datetime
 from django.contrib.contenttypes.models import ContentType
 from contribution_plan.models import PaymentPlan
 from product.models import Product
 from core.models import User
-from claim_batch.models import BatchRun, CapitationPayment
 from location.models import HealthFacility
-
 
 
 class CapitationPaymentCalculationRule(AbsCalculationRule):
@@ -96,21 +95,21 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
             if context == "BatchPayment":
                 # get all valuated claims that should be evaluated
                 #  with capitation that matches args (existing function develop in TZ scope)
-                audit_user_id, product_id, period, year, batch_run, work_data = cls._get_batch_run_parameters(**kwargs)
+                audit_user_id, product_id, start_date, end_date, batch_run, work_data = \
+                    cls._get_batch_run_parameters(**kwargs)
+
                 # retrieving the allocated contribution from work_data
-                allocated_contribution = work_data.allocated_contribution if not null else 0
-                #get_product
+                if 'allocated_contributions' in work_data:
+                    allocated_contribution = work_data['allocated_contributions'] if not None else 0
+                else:
+                    allocated_contribution = 0
+
+                # get_product from payment plan
                 product = instance.benefit_plan
                 # generating capitation report
-                generate_capitation(product, start_date, end_date, allocated_contribution )
-
-
-
-
-
+                generate_capitation(product, start_date, end_date, allocated_contribution)
 
                 # do the conversion based on those params after generating capitation
-                
                 batch_run, capitation_payment, capitation_hf_list, user = \
                     cls._process_capitation_results(product, **kwargs)
 
@@ -161,7 +160,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
             hf = kwargs.get('health_facility', None)
             capitation_payments = kwargs.get('capitation_payments', None)
             payment_plan = kwargs.get('payment_plan', None)
-            if check_bill_not_exist(instance, hf):
+            if check_bill_not_exist(instance, hf, payment_plan):
                 convert_from = instance.__class__.__name__
                 if convert_from == "BatchRun":
                     results = cls._convert_capitation_payment(instance, hf, capitation_payments, payment_plan)
@@ -176,42 +175,40 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
         product_id = kwargs.get('product_id', None)
         start_date = kwargs.get('start_date', None)
         end_date = kwargs.get('end_date', None)
-        batch_run = kwargs.get('batch_run', None)
         work_data = kwargs.get('work_data', None)
-        return audit_user_id, product_id, period, year, batch_run, work_data
+        if work_data:
+            batch_run = work_data['created_run']
+        else:
+            batch_run = None
+        return audit_user_id, product_id, start_date, end_date, batch_run, work_data
 
     @classmethod
     def _process_capitation_results(cls, product, **kwargs):
-        audit_user_id, location_id, period, year = cls._get_batch_run_parameters(**kwargs)
+        audit_user_id, location_id, start_date, end_date, batch_run, work_data =\
+            cls._get_batch_run_parameters(**kwargs)
         # if this is trigerred by batch_run - take user data from audit_user_id
         user = User.objects.filter(i_user__id=audit_user_id).first()
         if user is None:
             raise ValidationError(_("Such User does not exist"))
 
-        # get batch run related to this capitation payment
-        batch_run = BatchRun.objects.filter(run_year=year, run_month=period, location_id=location_id, validity_to__isnull=True)
-        if batch_run:
-            batch_run = batch_run.first()
-            region_id, district_id, region_code, district_code = get_capitation_region_and_district(location_id)
+        region_id, district_id, region_code, district_code = get_capitation_region_and_district(batch_run.location_id)
 
-            capitation_payment = CapitationPayment.objects.filter(
-                product=product,
-                validity_to=None,
-                region_code=region_code,
-                year=year,
-                month=period,
-                total_adjusted__gt=0
+        capitation_payment = CapitationPayment.objects.filter(
+            product=product,
+            validity_to=None,
+            region_code=region_code,
+            year=end_date.year,
+            month=end_date.month,
+            total_adjusted__gt=0
+        )
+        if district_code:
+            capitation_payment = capitation_payment.filter(
+                district_code=district_code,
             )
-            if district_code:
-                capitation_payment = capitation_payment.filter(
-                    district_code=district_code,
-                )
 
-            capitation_hf_list = list(capitation_payment.values('health_facility').distinct())
+        capitation_hf_list = list(capitation_payment.values('health_facility').distinct())
 
-            return batch_run, capitation_payment, capitation_hf_list, user
-        else:
-            raise ValidationError(_("BatchRun for that parameters does not exist"))
+        return batch_run, capitation_payment, capitation_hf_list, user
 
     @classmethod
     def _convert_capitation_payment(cls, instance, health_facility, capitation_payments, payment_plan):
