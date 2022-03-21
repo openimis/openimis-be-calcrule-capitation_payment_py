@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from gettext import gettext as _
 from invoice.services import BillService
 from calcrule_capitation_payment.converters import BatchRunToBillConverter, CapitationPaymentToBillItemConverter
-from calcrule_capitation_payment.models import CapitationPayment
+from claim_batch.models import CapitationPayment
 from core.signals import *
 from core import datetime
 from django.contrib.contenttypes.models import ContentType
@@ -62,6 +62,8 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     def check_calculation(cls, instance):
         class_name = instance.__class__.__name__
         match = False
+        if class_name == "ABCMeta":
+            match = str(cls.uuid) == str(instance.uuid)
         if class_name == "PaymentPlan":
             match = cls.uuid == str(instance.calculation)
         elif class_name == "BatchRun":
