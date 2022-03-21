@@ -9,7 +9,7 @@ from insuree.models import InsureePolicy
 from invoice.models import Bill
 from policy.models import Policy
 from location.models import Location, HealthFacility
-from .models import CapitationPayment
+from claim_batch.models import CapitationPayment
 
 logger = logging.getLogger(__name__)
 

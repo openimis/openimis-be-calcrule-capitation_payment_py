@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from gettext import gettext as _
 from invoice.services import BillService
 from calcrule_capitation_payment.converters import BatchRunToBillConverter, CapitationPaymentToBillItemConverter
-from calcrule_capitation_payment.models import CapitationPayment
+from claim_batch.models import CapitationPayment
 from core.signals import *
 from core import datetime
 from django.contrib.contenttypes.models import ContentType
