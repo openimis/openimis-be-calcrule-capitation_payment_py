@@ -62,6 +62,8 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     def check_calculation(cls, instance):
         class_name = instance.__class__.__name__
         match = False
+        if class_name == "ABCMeta":
+            match = str(cls.uuid) == str(instance.uuid)
         if class_name == "PaymentPlan":
             match = cls.uuid == str(instance.calculation)
         elif class_name == "BatchRun":
