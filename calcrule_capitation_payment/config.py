@@ -18,6 +18,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          "relevance": "True",
          "optionSet": [
             {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
+            {
                "value": "H",
                "label": {
                   "en": "Hospital",
@@ -57,6 +64,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          "relevance": "True",
          "optionSet": [
             {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
+            {
                "value": "D",
                "label": {
                   "en": "District",
@@ -69,7 +83,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                   "en": "Region",
                   "fr": "Region"
                }
-            },
+            }
          ],
          "default": "null"
       },
@@ -88,6 +102,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          },
          "relevance": "True",
          "optionSet": [
+            {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
             {
                "value": "H",
                "label": {
@@ -128,6 +149,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          "relevance": "True",
          "optionSet": [
             {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
+            {
                "value": "D",
                "label": {
                   "en": "District",
@@ -140,7 +168,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                   "en": "Region",
                   "fr": "Region"
                }
-            },
+            }
          ],
          "default": "null"
       },
@@ -159,6 +187,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          },
          "relevance": "True",
          "optionSet": [
+            {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
             {
                "value": "H",
                "label": {
@@ -199,6 +234,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          "relevance": "True",
          "optionSet": [
             {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
+            {
                "value": "D",
                "label": {
                   "en": "District",
@@ -211,7 +253,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                   "en": "Region",
                   "fr": "Region"
                }
-            },
+            }
          ],
          "default": "null"
       },
@@ -230,6 +272,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          },
          "relevance": "True",
          "optionSet": [
+            {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
             {
                "value": "H",
                "label": {
@@ -270,6 +319,13 @@ CLASS_RULE_PARAM_VALIDATION = [
          "relevance": "True",
          "optionSet": [
             {
+               "value": "null",
+               "label": {
+                  "en": "",
+                  "fr": ""
+               }
+            },
+            {
                "value": "D",
                "label": {
                   "en": "District",
@@ -282,7 +338,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                   "en": "Region",
                   "fr": "Region"
                }
-            },
+            }
          ],
          "default": "null"
       },
