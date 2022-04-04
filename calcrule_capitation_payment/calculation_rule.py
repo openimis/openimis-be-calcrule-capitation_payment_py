@@ -109,7 +109,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                 # get_product from payment plan
                 product = instance.benefit_plan
                 # generating capitation report
-                generate_capitation(product, start_date, end_date, allocated_contribution)
+                generate_capitation(product, instance, start_date, end_date, allocated_contribution)
 
                 # do the conversion based on those params after generating capitation
                 batch_run, capitation_payment, capitation_hf_list, user = \
