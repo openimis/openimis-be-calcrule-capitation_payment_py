@@ -1,3 +1,4 @@
+import decimal
 import json
 import logging
 
@@ -272,7 +273,7 @@ def generate_capitation_health_facility(
     up_ins_population = alc_contri_ins_population / sum_insurees if sum_insurees > 0 else 0
     up_ins_families = alc_contri_ins_families / sum_insured_families if sum_insured_families > 0 else 0
     up_visits = alc_contri_visits / sum_visits if sum_visits > 0 else 0
-    up_adjusted_amount = alc_contri_adjusted_amount / sum_adjusted_amount if sum_adjusted_amount > 0 else 0
+    up_adjusted_amount = decimal.Decimal(alc_contri_adjusted_amount) / sum_adjusted_amount if sum_adjusted_amount > 0 else 0
 
     # amount for this HF
     total_population = sum_hf_pop * up_population
@@ -465,19 +466,15 @@ def get_product_sum_claim(product, start_date, end_date, health_facility=None):
         services = services.filter(claim__health_facility=health_facility)
     # count the distinct claims based on below statement
     # visits = (items.only('claim').union(services.only('claim'))).annotate(sum=Count('claim'))
-    visit_services = list(services.only('claim').values_list('claim__id', flat=True))
-    visit_items = list(items.only('claim').values_list('claim__id', flat=True))
-    sum_visits = len(list(set(visit_items + visit_services)))
-    # addup all adjusted_amount
-    if items.count() > 0:
-        items = items.annotate(sum=Sum(F('price_adjusted')))
-    if services.count() > 0:
-        services = services.annotate(sum=Sum(F('price_adjusted')))
+    sum_visits = (
+        items.values('claim_id').distinct().union(services.values('claim_id').distinct())
+    ).count()
 
     sum_items, sum_services = 0, 0
-    for item in items:
-        sum_items += item.sum if item.sum else 0
-    for service in services:
-        sum_services += service.sum if service.sum else 0
+    # addup all adjusted_amount
+    if items.count() > 0:
+        sum_items = items.aggregate(Sum('price_adjusted'))['price_adjusted__sum']
+    if services.count() > 0:
+        sum_services = services.aggregate(Sum('price_adjusted'))['price_adjusted__sum']
 
     return sum_items + sum_services, sum_visits
