@@ -1,18 +1,25 @@
+import decimal
+import json
 import logging
+
 from django.db import connection
 from django.db.models import Value, Q, Sum, Count, F, Prefetch
 from django.db.models.functions import Coalesce
 from django.contrib.contenttypes.models import ContentType
 
 from claim.models import ClaimItem, Claim, ClaimService
+from claim_batch.models import CapitationPayment
 from insuree.models import InsureePolicy
 from invoice.models import Bill
-from policy.models import Policy
 from location.models import Location, HealthFacility
-from claim_batch.models import CapitationPayment
+from policy.models import Policy
 
 logger = logging.getLogger(__name__)
 
+INTEGER_PARAMETERS = [
+    "share_contribution", "weight_population", "weight_number_families", "weight_insured_population",
+    "weight_number_insured_families", "weight_number_visits", "weight_adjusted_amount"
+]
 
 #@deprecated
 def capitation_report_data_for_submit(audit_user_id, location_id, period, year):
@@ -143,11 +150,30 @@ def check_bill_not_exist(instance, health_facility, payment_plan, **kwargs):
             return True
 
 
-def generate_capitation(product, start_date, end_date, allocated_contribution):
-    population_matter = product.weight_population > 0 or product.weight_nb_families > 0
+def obtain_calcrule_params(payment_plan) -> dict:
+    # obtaining payment plan params saved in payment plan json_ext fields
+    pp_params = payment_plan.json_ext
+    if isinstance(pp_params, str):
+        pp_params = json.loads(pp_params)
+    if pp_params:
+        pp_params = pp_params["calculation_rule"] if "calculation_rule" in pp_params else None
+    # correct empty string values
+    for key, value in pp_params.items():
+        if key in INTEGER_PARAMETERS:
+            if value == "":
+                pp_params[f'{key}'] = 0
+            else:
+                pp_params[f'{key}'] = int(value)
+    return pp_params
+
+
+def generate_capitation(product, payment_plan, start_date, end_date, allocated_contribution):
+    pp_params = obtain_calcrule_params(payment_plan)
+
+    population_matter = pp_params['weight_population'] > 0 or pp_params['weight_number_families'] > 0
     year = end_date.year
     month = end_date.month
-    if product.weight_insured_population > 0 or product.weight_nb_insured_families > 0 \
+    if pp_params['weight_insured_population'] > 0 or pp_params['weight_number_insured_families'] > 0 \
             or population_matter:
         # get location (district) linked to the product --> to be 
         sum_pop, sum_families = 1, 1
@@ -155,19 +181,19 @@ def generate_capitation(product, start_date, end_date, allocated_contribution):
             sum_pop, sum_families = get_product_sum_population(product)
         sum_insurees = 1
         # get the total number of insuree
-        if product.weight_insured_population > 0:
+        if pp_params['weight_insured_population'] > 0:
             sum_insurees = get_product_sum_insurees(product, start_date, end_date)
         # get the total number of insured family
         sum_insured_families = 1
-        if product.weight_nb_insured_families > 0:
+        if pp_params['weight_number_insured_families'] > 0:
             sum_insured_families = get_product_sum_policies(product, start_date, end_date)
         # get the claim data
         sum_claim_adjusted_amount, sum_visits = 1, 1
-        if product.weight_nb_visits > 0 or product.weight_adjusted_amount > 0:
+        if pp_params['weight_number_visits'] > 0 or pp_params['weight_adjusted_amount'] > 0:
             sum_claim_adjusted_amount, sum_visits = get_product_sum_claim(product, start_date, end_date)
 
         # select HF concerned with capitation within the product location (new HF will come from claims)
-        health_facilities = get_product_hf_filter(product, get_capitation_health_facilites(product, start_date, end_date))
+        health_facilities = get_product_hf_filter(pp_params, get_capitation_health_facilites(product, pp_params, start_date, end_date))
         health_facilities = health_facilities\
             .prefetch_related(Prefetch('location', queryset=Location.objects.filter(validity_to__isnull=True)))\
             .prefetch_related(Prefetch('location__parent', queryset=Location.objects.filter(validity_to__isnull=True)))
@@ -177,39 +203,39 @@ def generate_capitation(product, start_date, end_date, allocated_contribution):
             # we might need to create the capitation report here with all the
             # common fields and run a class method generate_capitation_health_facility(product, hf)
             generate_capitation_health_facility(
-                product, health_facility, allocated_contribution,
+                product, pp_params, health_facility, allocated_contribution,
                 sum_insurees, sum_insured_families, sum_pop,
                 sum_families, sum_claim_adjusted_amount, sum_visits,
                 year, month, start_date, end_date
             )
 
 
-def get_product_hf_filter(product, queryset):
+def get_product_hf_filter(pp_params, queryset):
     # takes all HF if not level config is defined (ie. no filter added)
-    if product.capitation_sublevel_1 is not None or product.capitation_sublevel_2 is not None \
-            or product.capitation_sublevel_3 is not None or product.capitation_sublevel_4 is not None:
+    if pp_params['hf_sublevel_1'] is not None or pp_params['hf_sublevel_2'] is not None \
+            or pp_params['hf_sublevel_3'] is not None or pp_params['hf_sublevel_4'] is not None:
         # take the HF that match level and sublevel OR level if sublevel is not set in product
         queryset = queryset\
             .filter(
-                (Q(level=product.capitation_level_1) &\
-                    (Q(sub_level=product.capitation_sublevel_1) | Q(sub_level__isnull=True))) |\
-                (Q(level=product.capitation_level_2) &\
-                    (Q(sub_level=product.capitation_sublevel_2) | Q(sub_level__isnull=True))) |\
+                (Q(level=pp_params['hf_level_1']) &\
+                    (Q(sub_level=pp_params['hf_sublevel_1']) | Q(sub_level__isnull=True))) |\
+                (Q(level=pp_params['hf_level_2']) &\
+                    (Q(sub_level=pp_params['hf_sublevel_2']) | Q(sub_level__isnull=True))) |\
 
-                (Q(level=product.capitation_level_3) &\
-                    (Q(sub_level=product.capitation_sublevel_3) | Q(sub_level__isnull=True))) |\
+                (Q(level=pp_params['hf_level_3']) &\
+                    (Q(sub_level=pp_params['hf_sublevel_3']) | Q(sub_level__isnull=True))) |\
 
-                (Q(level=product.capitation_level_4) &\
-                    (Q(sub_level=product.capitation_sublevel_4) | Q(sub_level__isnull=True)))
+                (Q(level=pp_params['hf_level_4']) &\
+                    (Q(sub_level=pp_params['hf_sublevel_4']) | Q(sub_level__isnull=True)))
             )
     return queryset
 
 
 def generate_capitation_health_facility(
-        product, health_facility, allocated_contribution, sum_insurees, sum_insured_families,
+        product, pp_params, health_facility, allocated_contribution, sum_insurees, sum_insured_families,
         sum_pop, sum_families, sum_adjusted_amount, sum_visits, year, month, start_date, end_date
 ):
-    population_matter = product.weight_population > 0 or product.weight_nb_families > 0
+    population_matter = pp_params['weight_population'] > 0 or pp_params['weight_number_families'] > 0
 
     sum_hf_pop, sum_hf_families = 0, 0
     # get the sum of pop
@@ -218,28 +244,28 @@ def generate_capitation_health_facility(
 
     # get the sum of insuree
     sum_hf_insurees = 0
-    if product.weight_insured_population > 0:
+    if pp_params['weight_insured_population'] > 0:
         sum_hf_insurees = get_product_sum_insurees(product, start_date, end_date, health_facility)
 
     # get the sum of policy/insureed families
     sum_hf_insured_families = 0
-    if product.weight_nb_insured_families > 0:
+    if pp_params['weight_number_insured_families'] > 0:
         sum_hf_insured_families = get_product_sum_policies(product, start_date, end_date, health_facility)
 
     sum_hf_claim_adjusted_amount, sum_hf_visits = 0, 0
-    if product.weight_nb_visits > 0 or product.weight_adjusted_amount > 0:
+    if pp_params['weight_number_visits'] > 0 or pp_params['weight_adjusted_amount'] > 0:
         sum_hf_claim_adjusted_amount, sum_hf_visits = get_product_sum_claim(product, start_date, end_date, health_facility)
 
     # ammont available for all HF capitation
-    allocated = (allocated_contribution * product.share_contribution) / 100
+    allocated = (allocated_contribution * pp_params['share_contribution']) / 100
 
     # Allocated ammount for the Prodcut (common for all HF)
-    alc_contri_population = (allocated * product.weight_population) / 100
-    alc_contri_num_families = (allocated * product.weight_nb_families) / 100
-    alc_contri_ins_population = (allocated * product.weight_insured_population) / 100
-    alc_contri_ins_families = (allocated * product.weight_nb_insured_families) / 100
-    alc_contri_visits = (allocated * product.weight_nb_visits) / 100
-    alc_contri_adjusted_amount = (allocated * product.weight_adjusted_amount) / 100
+    alc_contri_population = (allocated * pp_params['weight_population']) / 100
+    alc_contri_num_families = (allocated * pp_params['weight_number_families']) / 100
+    alc_contri_ins_population = (allocated * pp_params['weight_insured_population']) / 100
+    alc_contri_ins_families = (allocated * pp_params['weight_number_insured_families']) / 100
+    alc_contri_visits = (allocated * pp_params['weight_number_visits']) / 100
+    alc_contri_adjusted_amount = (allocated * pp_params['weight_adjusted_amount']) / 100
 
     # unit  (common for all HF)
     up_population = alc_contri_population / sum_pop if sum_pop > 0 else 0
@@ -247,7 +273,7 @@ def generate_capitation_health_facility(
     up_ins_population = alc_contri_ins_population / sum_insurees if sum_insurees > 0 else 0
     up_ins_families = alc_contri_ins_families / sum_insured_families if sum_insured_families > 0 else 0
     up_visits = alc_contri_visits / sum_visits if sum_visits > 0 else 0
-    up_adjusted_amount = alc_contri_adjusted_amount / sum_adjusted_amount if sum_adjusted_amount > 0 else 0
+    up_adjusted_amount = decimal.Decimal(alc_contri_adjusted_amount) / sum_adjusted_amount if sum_adjusted_amount > 0 else 0
 
     # amount for this HF
     total_population = sum_hf_pop * up_population
@@ -323,7 +349,7 @@ def get_product_villages(product):
     return villages
 
 
-def get_capitation_health_facilites(product, start_date, end_date):
+def get_capitation_health_facilites(product, pp_params, start_date, end_date):
     districts = get_product_districts(product)
     health_facilities_districts = HealthFacility.objects\
         .filter(validity_to__isnull=True)\
@@ -338,7 +364,7 @@ def get_capitation_health_facilites(product, start_date, end_date):
                 | (Q(claim__services__product=product) & Q(claim__services__validity_to__isnull=True)))
 
     if health_facilities_districts is not None:
-        health_facilities = get_product_hf_filter(product, health_facilities_districts | health_facilities_off_districts).distinct()
+        health_facilities = get_product_hf_filter(pp_params, health_facilities_districts | health_facilities_off_districts).distinct()
         return health_facilities
     else:
         return None
@@ -394,7 +420,7 @@ def get_product_sum_policies(product, start_date, end_date, health_facility=None
             .filter(product=product)
         # filter based on catchement if HF is defined
         if health_facility is None:
-                policies = policies.annotate(sum=Count('id')/100)
+            policies = policies.annotate(sum=Count('id')/100)
         else:
             policies = policies.filter(family__location__catchments__health_facility=health_facility)\
                 .filter(family__location__catchments__validity_to__isnull=True)\
@@ -415,8 +441,8 @@ def get_product_sum_population(product):
 
         sum_pop, sum_families = 0, 0
         for p in pop:
-            sum_pop += p.sum_pop
-            sum_families += p.sum_families
+            sum_pop += p.sum_pop if p.sum_pop else 0
+            sum_families += p.sum_families if p.sum_families else 0
 
         return sum_pop, sum_families
     else:
@@ -427,29 +453,28 @@ def get_product_sum_claim(product, start_date, end_date, health_facility=None):
     # make the items querysets
     items = ClaimItem.objects.filter(validity_to__isnull=True)\
         .filter(product=product)\
-        .filter(claim__processed_date__lte=end_date)\
-        .filter(claim__processed_date__gt=start_date)
+        .filter(claim__date_processed__lte=end_date)\
+        .filter(claim__date_processed__gt=start_date)
     # make the services querysets
     services = ClaimService.objects.filter(validity_to__isnull=True)\
         .filter(product=product)\
-        .filter(claim__processed_date__lte=end_date)\
-        .filter(claim__processed_date__gt=start_date)
+        .filter(claim__date_processed__lte=end_date)\
+        .filter(claim__date_processed__gt=start_date)
     # get the number of claims concened by the Items and services queryset
     if health_facility is not None:
         items = items.filter(claim__health_facility=health_facility)
         services = services.filter(claim__health_facility=health_facility)
-    # count the distinct claims
-    visits = items.only('claim').union(services.only('claim')).annotate(sum=Count('claim'))
-    # addup all adjusted_amount
-    items = items.annotate(sum=Sum('adjusted_amount'))
-    services = services.annotate(sum=Sum('adjusted_amount'))
+    # count the distinct claims based on below statement
+    # visits = (items.only('claim').union(services.only('claim'))).annotate(sum=Count('claim'))
+    sum_visits = (
+        items.values('claim_id').distinct().union(services.values('claim_id').distinct())
+    ).count()
 
-    sum_items, sum_services, sum_visits = 0, 0, 0
-    for visit in visits:
-        sum_visits += visit.sum
-    for item in items:
-        sum_items += item.sum
-    for service in services:
-        sum_services += service.sum
+    sum_items, sum_services = 0, 0
+    # addup all adjusted_amount
+    if items.count() > 0:
+        sum_items = items.aggregate(Sum('price_adjusted'))['price_adjusted__sum']
+    if services.count() > 0:
+        sum_services = services.aggregate(Sum('price_adjusted'))['price_adjusted__sum']
 
     return sum_items + sum_services, sum_visits
