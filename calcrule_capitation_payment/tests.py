@@ -32,11 +32,11 @@ from product.test_helpers import (
 )
 
 _TEST_USER_NAME = "test_batch_run"
-_TEST_USER_PASSWORD = "test_batch_run"
+_TEST_USER_PWD = "test_batch_run"
 _TEST_DATA_USER = {
     "username": _TEST_USER_NAME,
     "last_name": _TEST_USER_NAME,
-    "password": _TEST_USER_PASSWORD,
+    "password": _TEST_USER_PWD,
     "other_names": _TEST_USER_NAME,
     "user_types": "INTERACTIVE",
     "language": "en",
