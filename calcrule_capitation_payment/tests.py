@@ -2,6 +2,8 @@ import calendar
 import datetime
 import decimal
 
+from django.test import TestCase
+
 from claim.gql_mutations import validate_and_process_dedrem_claim
 from claim.models import ClaimDedRem, Claim
 from claim.test_helpers import (
@@ -15,13 +17,13 @@ from contribution.test_helpers import create_test_payer, create_test_premium
 from contribution_plan.models import PaymentPlan
 from contribution_plan.tests.helpers import create_test_payment_plan
 from core.services import create_or_update_interactive_user, create_or_update_core_user
-from django.test import TestCase
 from insuree.test_helpers import create_test_insuree
-from invoice.models import Bill
 from medical.test_helpers import create_test_service, create_test_item
 from medical_pricelist.test_helpers import (
     add_service_to_hf_pricelist,
     add_item_to_hf_pricelist,
+    create_test_item_pricelist,
+    create_test_service_pricelist
 )
 from policy.test_helpers import create_test_policy
 from product.models import ProductItemOrService
@@ -30,6 +32,11 @@ from product.test_helpers import (
     create_test_product_service,
     create_test_product_item,
 )
+from location.test_helpers import (
+    create_test_location,
+    create_test_health_facility
+)
+
 
 _TEST_USER_NAME = "test_batch_run"
 _TEST_USER_PWD = "test_batch_run"
@@ -58,6 +65,10 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         then submits a review rejecting part of it, then process the claim.
         It should not be processed (which was ok) but the dedrem should be deleted.
         """
+        # create location
+        test_region = create_test_location('R')
+        test_district = create_test_location('D', custom_props={"parent_id": test_region.id})
+
         # Given
         insuree = create_test_insuree()
         self.assertIsNotNone(insuree)
@@ -69,6 +80,7 @@ class BatchRunWithCapitationPaymentTest(TestCase):
             custom_props={
                 "name": "simplebatch",
                 "lump_sum": 10_000,
+                "location_id": test_region.id
             },
         )
         payment_plan = create_test_payment_plan(
@@ -128,15 +140,24 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         premium = create_test_premium(
             policy_id=policy.id, custom_props={"payer_id": payer.id}
         )
-        pricelist_detail1 = add_service_to_hf_pricelist(service)
-        pricelist_detail2 = add_item_to_hf_pricelist(item)
+        test_item_price_list = create_test_item_pricelist(test_region.id)
+        test_service_price_list = create_test_service_pricelist(test_region.id)
+        # create hf and attach item/services pricelist
+        test_health_facility = create_test_health_facility(
+            'HFT',
+            test_district.id,
+            custom_props={"services_pricelist_id": test_service_price_list.id,
+                          "items_pricelist_id": test_item_price_list.id}
+        )
+        pricelist_detail1 = add_service_to_hf_pricelist(service, test_health_facility.id)
+        pricelist_detail2 = add_item_to_hf_pricelist(item, test_health_facility.id)
 
-        claim1 = create_test_claim({"insuree_id": insuree.id})
+        claim1 = create_test_claim({"claimed": 500.0, "insuree_id": insuree.id, 'health_facility_id': test_health_facility.id})
         service1 = create_test_claimservice(
-            claim1, custom_props={"service_id": service.id, "qty_provided": 2}
+            claim1, custom_props={"price_asked": 100, "service_id": service.id, "qty_provided": 2}
         )
         item1 = create_test_claimitem(
-            claim1, "A", custom_props={"item_id": item.id, "qty_provided": 3}
+            claim1, "A", custom_props={"price_asked": 100, "item_id": item.id, "qty_provided": 3}
         )
         errors = validate_and_process_dedrem_claim(claim1, self.user, True)
         _, days_in_month = calendar.monthrange(claim1.validity_from.year, claim1.validity_from.month)
@@ -162,7 +183,7 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         end_date = datetime.datetime(claim1.validity_from.year, claim1.validity_from.month, days_in_month)
         batch_run = do_process_batch(
             self.user.id_for_audit,
-            None,
+            test_region.id,
             end_date
         )
 
@@ -198,3 +219,8 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         product.delete()
         if batch_run is not None:
             batch_run.delete()
+        test_health_facility.delete()
+        test_service_price_list.delete()
+        test_item_price_list.delete()
+        test_district.delete()
+        test_region.delete()
