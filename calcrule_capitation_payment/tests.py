@@ -37,7 +37,6 @@ from location.test_helpers import (
     create_test_health_facility
 )
 
-
 _TEST_USER_NAME = "test_batch_run"
 _TEST_USER_PWD = "test_batch_run"
 _TEST_DATA_USER = {
@@ -53,6 +52,7 @@ _TEST_DATA_USER = {
 
 class BatchRunWithCapitationPaymentTest(TestCase):
     def setUp(self) -> None:
+        super(BatchRunWithCapitationPaymentTest, self).setUp()
         i_user, i_user_created = create_or_update_interactive_user(
             user_id=None, data=_TEST_DATA_USER, audit_user_id=999, connected=False)
         user, user_created = create_or_update_core_user(
@@ -152,7 +152,8 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         pricelist_detail1 = add_service_to_hf_pricelist(service, test_health_facility.id)
         pricelist_detail2 = add_item_to_hf_pricelist(item, test_health_facility.id)
 
-        claim1 = create_test_claim({"claimed": 500.0, "insuree_id": insuree.id, 'health_facility_id': test_health_facility.id})
+        claim1 = create_test_claim(
+            {"claimed": 500.0, "insuree_id": insuree.id, 'health_facility_id': test_health_facility.id})
         service1 = create_test_claimservice(
             claim1, custom_props={"price_asked": 100, "service_id": service.id, "qty_provided": 2}
         )
