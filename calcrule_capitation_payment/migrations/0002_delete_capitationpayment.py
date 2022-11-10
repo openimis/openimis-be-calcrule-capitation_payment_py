@@ -9,8 +9,4 @@ class Migration(migrations.Migration):
         ('calcrule_capitation_payment', '0001_initial'),
     ]
 
-    operations = [
-        migrations.DeleteModel(
-            name='CapitationPayment',
-        ),
-    ]
+    operations = []

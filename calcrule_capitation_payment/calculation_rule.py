@@ -1,20 +1,40 @@
-from calcrule_capitation_payment.apps import AbsCalculationRule
-from calcrule_capitation_payment.config import CLASS_RULE_PARAM_VALIDATION, \
-    DESCRIPTION_CONTRIBUTION_VALUATION, FROM_TO
-from calcrule_capitation_payment.utils import capitation_report_data_for_submit, \
-    get_capitation_region_and_district, check_bill_not_exist, generate_capitation
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from gettext import gettext as _
-from invoice.services import BillService
-from calcrule_capitation_payment.converters import BatchRunToBillConverter, CapitationPaymentToBillItemConverter
+
+from calcrule_capitation_payment.apps import AbsCalculationRule
+from calcrule_capitation_payment.config import (
+    CLASS_RULE_PARAM_VALIDATION,
+    DESCRIPTION_CONTRIBUTION_VALUATION,
+    FROM_TO,
+    CONTEXTS,
+    INTEGER_PARAMETERS,
+    NONE_INTEGER_PARAMETERS,
+)
+from calcrule_capitation_payment.converters import (
+    BatchRunToBillConverter,
+    CapitationPaymentToBillItemConverter
+)
+from calcrule_capitation_payment.legacy import get_capitation_region_and_district
+from calcrule_capitation_payment.utils import (
+    check_bill_not_exist,
+    generate_capitation,
+    get_hospital_level_filter,
+    claim_batch_valuation
+)
 from claim_batch.models import CapitationPayment
-from core.signals import *
+from claim_batch.services import (
+    get_hospital_claim_filter,
+    update_claim_valuated
+)
 from core import datetime
-from django.contrib.contenttypes.models import ContentType
-from contribution_plan.models import PaymentPlan
-from product.models import Product
 from core.models import User
+from core.signals import *
+from contribution_plan.models import PaymentPlan
+from contribution_plan.utils import obtain_calcrule_params
+from invoice.services import BillService
 from location.models import HealthFacility
+from product.models import Product
 
 
 class CapitationPaymentCalculationRule(AbsCalculationRule):
@@ -55,7 +75,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     @classmethod
     def active_for_object(cls, instance, context, type="account_payable", sub_type="third_party_payment"):
         return instance.__class__.__name__ == "PaymentPlan" \
-               and context in ["BatchValuation", "BatchPayment", "IndividualPayment", "IndividualValuation"] \
+               and context in CONTEXTS \
                and cls.check_calculation(instance)
 
     @classmethod
@@ -92,45 +112,13 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     @classmethod
     def calculate(cls, instance, **kwargs):
         context = kwargs.get('context', None)
-        class_name = instance.__class__.__name__
         if instance.__class__.__name__ == "PaymentPlan":
             if context == "BatchPayment":
-                # get all valuated claims that should be evaluated
-                #  with capitation that matches args (existing function develop in TZ scope)
-                audit_user_id, product_id, start_date, end_date, batch_run, work_data = \
-                    cls._get_batch_run_parameters(**kwargs)
-
-                # retrieving the allocated contribution from work_data
-                if 'allocated_contributions' in work_data:
-                    allocated_contribution = work_data['allocated_contributions'] if not None else 0
-                else:
-                    allocated_contribution = 0
-
-                # get_product from payment plan
-                product = instance.benefit_plan
-                # generating capitation report
-                generate_capitation(product, instance, start_date, end_date, allocated_contribution)
-
-                # do the conversion based on those params after generating capitation
-                batch_run, capitation_payment, capitation_hf_list, user = \
-                    cls._process_capitation_results(product, **kwargs)
-
-                for chf in capitation_hf_list:
-                    capitation_payments = capitation_payment.filter(health_facility__id=chf['health_facility'])
-                    hf = HealthFacility.objects.get(id=chf['health_facility'])
-                    # take batch run to convert capitation payments into bill per HF
-                    cls.run_convert(
-                        instance=batch_run,
-                        convert_to='Bill',
-                        user=user,
-                        health_facility=hf,
-                        capitation_payments=capitation_payments,
-                        payment_plan=instance,
-                        context=context
-                    )
+                cls._process_batch_payment(instance, **kwargs)
                 return "conversion finished 'capitation payment'"
-            elif context == "BatchValuation":
-                pass
+            elif context == "BatchValuate":
+                cls._process_batch_valuation(instance, **kwargs)
+                return "valuation finished 'fee for service'"
             elif context == "IndividualPayment":
                 pass
             elif context == "IndividualValuation":
@@ -169,6 +157,57 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
                 results['user'] = kwargs.get('user', None)
                 BillService.bill_create(convert_results=results)
         return results
+
+    @classmethod
+    def _process_batch_valuation(cls, instance, **kwargs):
+        work_data = kwargs.get('work_data', None)
+        product = work_data["product"]
+        pp_params = obtain_calcrule_params(instance, INTEGER_PARAMETERS, NONE_INTEGER_PARAMETERS)
+        work_data["pp_params"] = pp_params
+        # manage the in/out patient params
+        work_data["claims"] = work_data["claims"].filter(get_hospital_level_filter(pp_params)) \
+            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type']))
+        work_data["items"] = work_data["items"].filter(get_hospital_level_filter(pp_params, prefix='claim__')) \
+            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type'], 'claim__'))
+        work_data["services"] = work_data["services"].filter(get_hospital_level_filter(pp_params, prefix='claim__')) \
+            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type'], 'claim__'))
+        claim_batch_valuation(instance, work_data)
+        update_claim_valuated(work_data['claims'], work_data['created_run'])
+
+    @classmethod
+    def _process_batch_payment(cls, instance, **kwargs):
+        # get all valuated claims that should be evaluated
+        #  with capitation that matches args (existing function develop in TZ scope)
+        context = kwargs.get('context', None)
+        audit_user_id, product_id, start_date, end_date, batch_run, work_data = \
+            cls._get_batch_run_parameters(**kwargs)
+
+        # retrieving the allocated contribution from work_data
+        if 'allocated_contributions' in work_data:
+            allocated_contribution = work_data['allocated_contributions'] if not None else 0
+        else:
+            allocated_contribution = 0
+
+        # generating capitation report
+        generate_capitation(instance, start_date, end_date, allocated_contribution)
+
+        # do the conversion based on those params after generating capitation
+        batch_run, capitation_payment, capitation_hf_list, user = \
+            cls._process_capitation_results(instance.benefit_plan, **kwargs)
+
+        for chf in capitation_hf_list:
+            capitation_payments = capitation_payment.filter(health_facility__id=chf['health_facility'])
+            hf = HealthFacility.objects.get(id=chf['health_facility'])
+            # take batch run to convert capitation payments into bill per HF
+            cls.run_convert(
+                instance=batch_run,
+                convert_to='Bill',
+                user=user,
+                health_facility=hf,
+                capitation_payments=capitation_payments,
+                payment_plan=instance,
+                context=context
+            )
 
     @classmethod
     def _get_batch_run_parameters(cls, **kwargs):
