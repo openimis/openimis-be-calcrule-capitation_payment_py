@@ -496,7 +496,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                "replace": "121006"
             },
             "relevance": "True",
-            "condition": "INPUT<100",
+            "condition": "INPUT<=100",
             "default": ""
          },
          {
