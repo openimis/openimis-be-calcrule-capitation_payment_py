@@ -435,8 +435,8 @@ CLASS_RULE_PARAM_VALIDATION = [
             "type": "number",
             "name": "weight_insured_population",
             "label": {
-               "en": "Weight Number Population",
-               "fr": "Weight Number Population"
+               "en": "Weight of Insured Population",
+               "fr": "Weight of Insured Population"
             },
             "rights": {
                "read": "121001",
