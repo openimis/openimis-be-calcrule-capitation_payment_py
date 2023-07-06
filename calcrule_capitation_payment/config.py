@@ -435,8 +435,8 @@ CLASS_RULE_PARAM_VALIDATION = [
             "type": "number",
             "name": "weight_insured_population",
             "label": {
-               "en": "Weight Number Population",
-               "fr": "Weight Number Population"
+               "en": "Weight of Insured Population",
+               "fr": "Weight of Insured Population"
             },
             "rights": {
                "read": "121001",
@@ -496,7 +496,7 @@ CLASS_RULE_PARAM_VALIDATION = [
                "replace": "121006"
             },
             "relevance": "True",
-            "condition": "INPUT<100",
+            "condition": "INPUT<=100",
             "default": ""
          },
          {
