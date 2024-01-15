@@ -128,7 +128,7 @@ class CapitationPaymentCalculationRule(AbsCalculationRule):
     def get_linked_class(cls, sender, class_name, **kwargs):
         list_class = []
         if class_name != None:
-            model_class = ContentType.objects.filter(model=class_name).first()
+            model_class = ContentType.objects.filter(model__iexact=class_name).first()
             if model_class:
                 model_class = model_class.model_class()
                 list_class = list_class + \
