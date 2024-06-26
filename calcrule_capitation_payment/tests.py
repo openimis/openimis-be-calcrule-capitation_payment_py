@@ -33,8 +33,8 @@ from product.test_helpers import (
     create_test_product_item,
 )
 from location.test_helpers import (
-    create_test_location,
-    create_test_health_facility
+    create_test_health_facility,
+    create_test_village
 )
 
 _TEST_USER_NAME = "test_batch_run"
@@ -65,12 +65,12 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         then submits a review rejecting part of it, then process the claim.
         It should not be processed (which was ok) but the dedrem should be deleted.
         """
-        # create location
-        test_region = create_test_location('R')
-        test_district = create_test_location('D', custom_props={"parent_id": test_region.id})
-
+        test_village  =create_test_village()
+        test_ward =test_village.parent
+        test_region =test_village.parent.parent.parent
+        test_district = test_village.parent.parent
         # Given
-        insuree = create_test_insuree()
+        insuree = create_test_insuree(custom_props={'current_village':test_village})
         self.assertIsNotNone(insuree)
         service = create_test_service("A", custom_props={"name": "test_simple_batch"})
         item = create_test_item("A", custom_props={"name": "test_simple_batch"})
@@ -223,5 +223,3 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         test_health_facility.delete()
         test_service_price_list.delete()
         test_item_price_list.delete()
-        test_district.delete()
-        test_region.delete()
