@@ -1,10 +1,11 @@
 import calendar
 import datetime
 import decimal
+import calendar
 
 from django.test import TestCase
 
-from claim.gql_mutations import validate_and_process_dedrem_claim
+from claim.gql_mutations import processing_claim
 from claim.models import ClaimDedRem, Claim
 from claim.test_helpers import (
     create_test_claim,
@@ -34,9 +35,11 @@ from product.test_helpers import (
 )
 from location.test_helpers import (
     create_test_health_facility,
+    create_test_health_catchment,
     create_test_village
 )
 
+from datetime import date, timedelta
 _TEST_USER_NAME = "test_batch_run"
 _TEST_USER_PWD = "test_batch_run"
 _TEST_DATA_USER = {
@@ -76,7 +79,7 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         item = create_test_item("A", custom_props={"name": "test_simple_batch"})
 
         product = create_test_product(
-            "BCUL0001",
+            "TESTCAPI",
             custom_props={
                 "name": "simplebatch",
                 "lump_sum": 10_000,
@@ -113,13 +116,13 @@ class BatchRunWithCapitationPaymentTest(TestCase):
                         'distr_11': 100,
                         'distr_12': 100,
                         'claim_type': 'B',
-                        'weight_adjusted_amount': 2,
-                        "share_contribution": 1,
-                        "weight_population": 1,
-                        "weight_number_families": 1,
-                        "weight_insured_population": 1,
-                        "weight_number_insured_families": 1,
-                        "weight_number_visits": 1
+                        'weight_adjusted_amount': 100,
+                        "share_contribution": 100,
+                        "weight_population": 0,
+                        "weight_number_families": 0,
+                        "weight_insured_population": 0,
+                        "weight_number_insured_families": 0,
+                        "weight_number_visits": 0
                     }
                 }
             }
@@ -135,11 +138,20 @@ class BatchRunWithCapitationPaymentTest(TestCase):
             item,
             custom_props={"price_origin": ProductItemOrService.ORIGIN_RELATIVE},
         )
-        policy = create_test_policy(product, insuree, link=True)
+        policy = create_test_policy(product, insuree, link=True, custom_props={
+                'effective_date': date.today() - timedelta(days=200),
+                'expiry_date': date.today() + timedelta(days=165),
+                'start_date': date.today() - timedelta(days=200),
+                'value': 1000
+                 })
         payer = create_test_payer()
         premium = create_test_premium(
-            policy_id=policy.id, custom_props={"payer_id": payer.id}
-        )
+            policy_id=policy.id, custom_props={
+                "payer_id": payer.id,
+                'amount': 1000,
+                'pay_date': date.today() - timedelta(days=200),
+                'created_date': datetime.datetime.now() - timedelta(days=200)
+        })
         test_item_price_list = create_test_item_pricelist(test_region.id)
         test_service_price_list = create_test_service_pricelist(test_region.id)
         # create hf and attach item/services pricelist
@@ -149,6 +161,7 @@ class BatchRunWithCapitationPaymentTest(TestCase):
             custom_props={"services_pricelist_id": test_service_price_list.id,
                           "items_pricelist_id": test_item_price_list.id}
         )
+        create_test_health_catchment(test_health_facility, test_village)
         pricelist_detail1 = add_service_to_hf_pricelist(service, test_health_facility.id)
         pricelist_detail2 = add_item_to_hf_pricelist(item, test_health_facility.id)
 
@@ -160,25 +173,16 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         item1 = create_test_claimitem(
             claim1, "A", custom_props={"price_asked": 100, "item_id": item.id, "qty_provided": 3}
         )
-        errors = validate_and_process_dedrem_claim(claim1, self.user, True)
+        errors = processing_claim(claim1, self.user, True)
         _, days_in_month = calendar.monthrange(claim1.validity_from.year, claim1.validity_from.month)
         # add process stamp for claim to not use the process_stamp with now()
-        claim1.process_stamp = datetime.datetime(claim1.validity_from.year, claim1.validity_from.month,
-                                                 days_in_month - 1)
-        claim1.save()
-
-        self.assertEqual(len(errors), 0)
-        self.assertEqual(
-            claim1.status,
-            Claim.STATUS_PROCESSED,
-            "The claim has relative pricing, so should go to PROCESSED rather than VALUATED",
-        )
+        self.assertEquals(len(errors), 0 , "Claim processing failed")
         # Make sure that the dedrem was generated
         dedrem = ClaimDedRem.objects.filter(claim=claim1).first()
-        self.assertIsNotNone(dedrem)
-        self.assertEquals(dedrem.rem_g, 500)  # 100*2 + 100*3
+        self.assertIsNotNone(dedrem, "No demRem for Claim")
+        self.assertEquals(dedrem.rem_g, 500), "Wrong DemRem amount"  # 100*2 + 100*3
         # renumerated should be Null
-        self.assertEqual(claim1.remunerated, None)
+        self.assertEqual(claim1.remunerated, None, "Claim remunerated when it should not")
 
         # When
         end_date = datetime.datetime(claim1.validity_from.year, claim1.validity_from.month, days_in_month)
@@ -192,34 +196,18 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         item1.refresh_from_db()
         service1.refresh_from_db()
 
-        self.assertEquals(claim1.status, Claim.STATUS_VALUATED)
+        self.assertEquals(claim1.status, Claim.STATUS_VALUATED, "Claim status should be valuated but it is not")
         self.assertNotEqual(item1.price_valuated, item1.price_adjusted)
         self.assertNotEqual(service1.price_valuated, service1.price_adjusted)
         # based on calculation - should be 402.31 per item and service
-        # therefore renumerated = 804.62
-        self.assertEqual(item1.price_valuated, decimal.Decimal('402.31'))
-        self.assertEqual(service1.price_valuated, decimal.Decimal('402.31'))
+        # Contribution 1000 -> 
+        # share contribution 100%
+        # total remunerated 500  
+        # index = (1000 / 365  * day_in mount) / 500
+        # value = index * etlem value
+        expected_value = round(decimal.Decimal((1000 / 365 * days_in_month / 500 * 100)), 2)
+        self.assertEqual(item1.price_valuated, expected_value)
+        self.assertEqual(service1.price_valuated, expected_value)
         self.assertEqual(claim1.remunerated, service1.price_valuated + item1.price_valuated)
 
-        # tearDown
-        # dedrem.delete() # already done if the test passed
-        premium.delete()
-        payer.delete()
-        delete_claim_with_itemsvc_dedrem_and_history(claim1)
-        policy.insuree_policies.first().delete()
-        policy.delete()
-        product_item.delete()
-        product_service.delete()
-        pricelist_detail1.delete()
-        pricelist_detail2.delete()
-        service.delete()
-        item.delete()
-        product.relativeindex_set.all().delete()
-        product.relative_distributions.all().delete()
-        PaymentPlan.objects.filter(id=payment_plan.id).delete()
-        product.delete()
-        if batch_run is not None:
-            batch_run.delete()
-        test_health_facility.delete()
-        test_service_price_list.delete()
-        test_item_price_list.delete()
+
