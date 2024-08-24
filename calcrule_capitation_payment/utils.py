@@ -8,6 +8,8 @@ from django.db.models import (
     F,
     Prefetch,
 )
+from django.db.models.functions import Coalesce
+
 from django.contrib.contenttypes.models import ContentType
 
 from calcrule_capitation_payment.config import (
@@ -19,6 +21,7 @@ from claim.models import (
     Claim,
     ClaimService
 )
+from claim.subqueries import elm_adjusted_exp
 from claim_batch.models import (
     RelativeIndex,
     CapitationPayment
@@ -35,7 +38,7 @@ from location.models import (
     HealthFacility
 )
 from policy.models import Policy
-
+from core import filter_validity
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +76,8 @@ def claim_batch_valuation(payment_plan, work_data):
     # if there is no configuration the relative index will be set to 100 %
     if start_date is not None:
 
-        value_items = items.aggregate(sum=Sum('price_adjusted'))
-        value_services = services.aggregate(sum=Sum('price_adjusted'))
+        value_items = items.aggregate(sum=Sum(elm_adjusted_exp()))
+        value_services = services.aggregate(sum=Sum(elm_adjusted_exp()))
         if 'sum' in value_items:
             value += value_items['sum'] if value_items['sum'] else 0
         if 'sum' in value_services:
@@ -293,16 +296,20 @@ def get_capitation_health_facilites(product, pp_params, start_date, end_date):
 
 
 def get_hf_sum_population(health_facility):
-    pop = Location.objects.filter(validity_to__isnull=True)\
-            .filter(catchments__health_facility=health_facility)\
-            .filter(catchments__validity_to__isnull=True)\
-            .annotate(sum_pop=Sum((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100))\
-            .annotate(sum_families=Sum((F('male_population')+F('female_population')+F('other_population'))*F('catchments__catchment')/100))
+    pop = Location.objects.filter(
+        catchments__health_facility=health_facility,
+        catchments__validity_to__isnull=True,
+        *filter_validity()).annotate(
+            sum_pop=Sum((
+                Coalesce(F('male_population'), 0)
+                + Coalesce(F('female_population'), 0)
+                + Coalesce(F('other_population'), 0))*F('catchments__catchment')/100))\
+        .annotate(sum_families=Sum(Coalesce(F('families'), 0)*F('catchments__catchment')/100))
 
     sum_pop, sum_families = 0, 0
     for p in pop:
-        sum_pop += p.sum_pop
-        sum_families += p.sum_families
+        sum_pop += p.sum_pop or 0
+        sum_families += p.sum_families or 0
 
     return sum_pop, sum_families
 
@@ -461,11 +468,11 @@ def get_capitation_index_rate(value, pp_params, work_data):
     # the product and perdiod (fee for service takes only 'R' price_origin items and services)
     # get distr for the current month
     allocated_contributions = float(work_data["allocated_contributions"])
-    weight_adjusted_amount = float(pp_params["weight_adjusted_amount"])
+    weight_adjusted_amount = float(pp_params["weight_adjusted_amount"] / 100)
     value = float(value)
     if value > 0 and allocated_contributions > 0 and 'distr_%i' % work_data['end_date'].month in pp_params:
-        distr = float(pp_params['distr_%i' % work_data['end_date'].month])
-        index = ((weight_adjusted_amount / 100) * distr * allocated_contributions) / value
+        distr = float(pp_params['distr_%i' % work_data['end_date'].month] / 100)
+        index = (weight_adjusted_amount * distr * allocated_contributions) / value
         period_type, period_id = get_period(work_data['start_date'], work_data['end_date'])
         year = work_data['end_date'].year
         audit_user_id = work_data['created_run'].audit_user_id
