@@ -208,6 +208,6 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         expected_value = round(decimal.Decimal((1000 / 365 * days_in_month / 500 * 100)), 2)
         self.assertEqual(item1.price_valuated, expected_value)
         self.assertEqual(service1.price_valuated, expected_value)
-        self.assertEqual(claim1.remunerated, service1.price_valuated + item1.price_valuated)
+        self.assertEqual(claim1.valuated, service1.price_valuated + item1.price_valuated)
 
 

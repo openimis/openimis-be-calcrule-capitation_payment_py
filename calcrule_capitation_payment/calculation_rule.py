@@ -25,7 +25,8 @@ from calcrule_capitation_payment.utils import (
 from claim_batch.models import CapitationPayment
 from claim_batch.services import (
     get_hospital_claim_filter,
-    update_claim_valuated
+    update_claim_valuated,
+    update_claim_indexed_remunerated
 )
 from core import datetime
 from core.models import User
@@ -144,7 +145,8 @@ class CapitationPaymentCalculationRule(AbsStrategy):
             .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type'], 'claim__'))
         claim_batch_valuation(instance, work_data)
         update_claim_valuated(work_data['claims'], work_data['created_run'])
-
+        
+    
     @classmethod
     def _process_batch_payment(cls, instance, **kwargs):
         # get all valuated claims that should be evaluated
