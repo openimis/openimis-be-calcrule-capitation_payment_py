@@ -28,7 +28,8 @@ from claim_batch.models import (
 )
 from claim_batch.services import (
     get_period,
-    get_hospital_claim_filter
+    get_hospital_claim_filter,
+    get_contribution_index_rate
 )
 from contribution_plan.utils import obtain_calcrule_params
 from insuree.models import InsureePolicy
@@ -83,7 +84,7 @@ def claim_batch_valuation(payment_plan, work_data):
         if 'sum' in value_services:
             value += value_services['sum'] if value_services['sum'] else 0
 
-        capitation_index, distribution = get_capitation_index_rate(value, pp_params, work_data)
+        capitation_index, distribution = get_contribution_index_rate(value, pp_params, work_data)
         # update the item and services
         items.update(price_valuated=F('price_adjusted') * capitation_index * distribution)
         services.update(price_valuated=F('price_adjusted') * capitation_index * distribution)
@@ -447,22 +448,8 @@ def get_hospital_level_filter(pp_params, prefix=''):
     return qterm
 
 
-def create_index(product, index_value, index_type, period_type, period_id, year, audit_user_id):
-    index = RelativeIndex()
-    index.product = product
-    index.type = period_type
-    index.care_type = index_type
-    index.period = period_id
-    index.rel_index = index_value
-    index.year = year
-    index.audit_user_id = audit_user_id
-    from core.utils import TimeUtils
-    index.calc_date = TimeUtils.now()
-    index.save()
-
-
 # might be added in product service
-def get_capitation_index_rate(value, pp_params, work_data):
+def get_contribution_index_rate(value, pp_params, work_data):
     # capitation_index = weight_of_claim_adjusted_anount / 100 * share of contrib(PP, one per month) *
     # allocated_contribution : / Sum of adjusted_amount for item and services for
     # the product and perdiod (fee for service takes only 'R' price_origin items and services)
