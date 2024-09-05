@@ -447,26 +447,3 @@ def get_hospital_level_filter(pp_params, prefix=''):
             qterm |= Q(('%s__level' % hf, pp_params['hf_level_4']))
     return qterm
 
-
-# might be added in product service
-def get_contribution_index_rate(value, pp_params, work_data):
-    # capitation_index = weight_of_claim_adjusted_anount / 100 * share of contrib(PP, one per month) *
-    # allocated_contribution : / Sum of adjusted_amount for item and services for
-    # the product and perdiod (fee for service takes only 'R' price_origin items and services)
-    # get distr for the current month
-    allocated_contributions = float(work_data["allocated_contributions"])
-    weight_adjusted_amount = float(pp_params["weight_adjusted_amount"] / 100)
-    value = float(value)
-    if value > 0 and allocated_contributions > 0 and 'distr_%i' % work_data['end_date'].month in pp_params:
-        distr = float(pp_params['distr_%i' % work_data['end_date'].month] / 100)
-        index = (weight_adjusted_amount * distr * allocated_contributions) / value
-        period_type, period_id = get_period(work_data['start_date'], work_data['end_date'])
-        year = work_data['end_date'].year
-        audit_user_id = work_data['created_run'].audit_user_id
-        create_index(
-            work_data['product'], index, pp_params['claim_type'],
-            period_type, period_id, year, audit_user_id
-        )
-        return index, distr
-    else:
-        return 1, 1
