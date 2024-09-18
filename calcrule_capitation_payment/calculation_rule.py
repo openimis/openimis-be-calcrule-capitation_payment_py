@@ -2,7 +2,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from gettext import gettext as _
 
-from calcrule_capitation_payment.apps import AbsStrategy
+from core.abs_calculation_rule import AbsStrategy
 from calcrule_capitation_payment.config import (
     CLASS_RULE_PARAM_VALIDATION,
     DESCRIPTION_CONTRIBUTION_VALUATION,
@@ -36,7 +36,7 @@ from contribution_plan.utils import obtain_calcrule_params
 from invoice.services import BillService
 from location.models import HealthFacility
 from product.models import Product
-
+from uuid import UUID
 
 class CapitationPaymentCalculationRule(AbsStrategy):
     version = 1
@@ -64,9 +64,9 @@ class CapitationPaymentCalculationRule(AbsStrategy):
         class_name = instance.__class__.__name__
         match = False
         if class_name == "ABCMeta":
-            match = str(cls.uuid) == str(instance.uuid)
+            match = UUID(cls.uuid) == UUID(instance.uuid)
         if class_name == "PaymentPlan":
-            match = cls.uuid == str(instance.calculation)
+            match = UUID(cls.uuid) == UUID(instance.calculation)
         elif class_name == "BatchRun":
             # BatchRun → Product or Location if no prodcut
             match = cls.check_calculation(instance.location)
