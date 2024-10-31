@@ -68,9 +68,9 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         then submits a review rejecting part of it, then process the claim.
         It should not be processed (which was ok) but the dedrem should be deleted.
         """
-        test_village  =create_test_village()
-        test_ward =test_village.parent
-        test_region =test_village.parent.parent.parent
+        test_village = create_test_village()
+        test_ward = test_village.parent
+        test_region = test_village.parent.parent.parent
         test_district = test_village.parent.parent
         # Given
         insuree = create_test_insuree(custom_props={'current_village':test_village})
@@ -185,7 +185,11 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         self.assertEqual(claim1.remunerated, None, "Claim remunerated when it should not")
 
         # When
-        end_date = datetime.datetime(claim1.date_processed.year, claim1.date_processed.month, days_in_month)
+        end_date = datetime.datetime(
+            claim1.date_processed.year,
+            claim1.date_processed.month,
+            days_in_month
+        ) + datetime.timedelta(days=1)
         batch_run = do_process_batch(
             self.user.id_for_audit,
             test_region.id,

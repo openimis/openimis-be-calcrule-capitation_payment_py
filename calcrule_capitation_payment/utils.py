@@ -131,6 +131,10 @@ def generate_capitation(payment_plan, start_date, end_date, allocated_contributi
                 sum_families, sum_claim_adjusted_amount, sum_visits,
                 year, month, start_date, end_date
             )
+        update_claim_indexed_remunerated(
+            work_data["claims"],
+            work_data["created_run"],
+        )
 
 
 def get_product_hf_filter(pp_params, queryset):
