@@ -1,8 +1,7 @@
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from gettext import gettext as _
 
-from calcrule_capitation_payment.apps import AbsStrategy
+from core.abs_calculation_rule import AbsStrategy
 from calcrule_capitation_payment.config import (
     CLASS_RULE_PARAM_VALIDATION,
     DESCRIPTION_CONTRIBUTION_VALUATION,
@@ -30,7 +29,6 @@ from claim_batch.services import (
 )
 from core import datetime
 from core.models import User
-from core.signals import *
 from contribution_plan.models import PaymentPlan
 from contribution_plan.utils import obtain_calcrule_params
 from invoice.services import BillService
@@ -51,13 +49,13 @@ class CapitationPaymentCalculationRule(AbsStrategy):
     type = "account_payable"
     sub_type = "third_party_payment"
 
-
-
     @classmethod
     def active_for_object(cls, instance, context, type="account_payable", sub_type="third_party_payment"):
-        return instance.__class__.__name__ == "PaymentPlan" \
-               and context in CONTEXTS \
-               and cls.check_calculation(instance)
+        return (
+            instance.__class__.__name__ == "PaymentPlan"
+            and context in CONTEXTS
+            and cls.check_calculation(instance)
+        )
 
     @classmethod
     def check_calculation(cls, instance):
@@ -133,27 +131,55 @@ class CapitationPaymentCalculationRule(AbsStrategy):
     @classmethod
     def _process_batch_valuation(cls, instance, **kwargs):
         work_data = kwargs.get('work_data', None)
-        product = work_data["product"]
-        pp_params = obtain_calcrule_params(instance, INTEGER_PARAMETERS, NONE_INTEGER_PARAMETERS)
-        work_data["pp_params"] = pp_params
-        # manage the in/out patient params
-        work_data["claims"] = work_data["claims"].filter(get_hospital_level_filter(pp_params)) \
-            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type']))
-        work_data["items"] = work_data["items"].filter(get_hospital_level_filter(pp_params, prefix='claim__')) \
-            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type'], 'claim__'))
-        work_data["services"] = work_data["services"].filter(get_hospital_level_filter(pp_params, prefix='claim__')) \
-            .filter(get_hospital_claim_filter(product.ceiling_interpretation, pp_params['claim_type'], 'claim__'))
+        work_data['pp_params'] = obtain_calcrule_params(instance, INTEGER_PARAMETERS, NONE_INTEGER_PARAMETERS)
+        work_data = cls.filter_work_data(work_data, work_data['pp_params'])
         claim_batch_valuation(instance, work_data)
-        update_claim_valuated(work_data['claims'], work_data['created_run'])
-        
-    
+        update_claim_valuated(work_data["claims"], work_data["created_run"])
+
+    @staticmethod
+    def filter_work_data(work_data, pp_params):
+        product = work_data.get("product")
+        work_data["claims"] = (
+            work_data["claims"]
+            .filter(get_hospital_level_filter(pp_params))
+            .filter(
+                get_hospital_claim_filter(
+                    product.ceiling_interpretation, pp_params["claim_type"]
+                )
+            )
+        )
+        work_data["items"] = (
+            work_data["items"]
+            .filter(get_hospital_level_filter(pp_params, prefix="claim__"))
+            .filter(
+                get_hospital_claim_filter(
+                    product.ceiling_interpretation, pp_params["claim_type"], "claim__"
+                )
+            )
+        )
+        work_data["services"] = (
+            work_data["services"]
+            .filter(get_hospital_level_filter(pp_params, prefix="claim__"))
+            .filter(
+                get_hospital_claim_filter(
+                    product.ceiling_interpretation, pp_params["claim_type"], "claim__"
+                )
+            )
+        )
+
+        return work_data
+
     @classmethod
     def _process_batch_payment(cls, instance, **kwargs):
         # get all valuated claims that should be evaluated
         #  with capitation that matches args (existing function develop in TZ scope)
+        pp_params = obtain_calcrule_params(
+            instance, INTEGER_PARAMETERS, NONE_INTEGER_PARAMETERS
+        )
         context = kwargs.get('context', None)
         audit_user_id, product_id, start_date, end_date, batch_run, work_data = \
             cls._get_batch_run_parameters(**kwargs)
+        work_data = cls.filter_work_data(work_data, pp_params)
 
         # retrieving the allocated contribution from work_data
         if 'allocated_contributions' in work_data:
@@ -181,6 +207,10 @@ class CapitationPaymentCalculationRule(AbsStrategy):
                 payment_plan=instance,
                 context=context
             )
+        update_claim_indexed_remunerated(
+            work_data["claims"],
+            work_data["created_run"],
+        )
 
     @classmethod
     def _get_batch_run_parameters(cls, **kwargs):
