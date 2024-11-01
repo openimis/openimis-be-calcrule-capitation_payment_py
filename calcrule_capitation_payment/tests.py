@@ -185,7 +185,7 @@ class BatchRunWithCapitationPaymentTest(TestCase):
         self.assertEqual(claim1.remunerated, None, "Claim remunerated when it should not")
 
         # When
-        end_date = datetime.datetime(claim1.validity_from.year, claim1.validity_from.month, days_in_month)
+        end_date = datetime.datetime(claim1.date_processed.year, claim1.date_processed.month, days_in_month)
         batch_run = do_process_batch(
             self.user.id_for_audit,
             test_region.id,
