@@ -1,8 +1,7 @@
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from gettext import gettext as _
 
-from calcrule_capitation_payment.apps import AbsStrategy
+from core.abs_calculation_rule import AbsStrategy
 from calcrule_capitation_payment.config import (
     CLASS_RULE_PARAM_VALIDATION,
     DESCRIPTION_CONTRIBUTION_VALUATION,
@@ -30,7 +29,6 @@ from claim_batch.services import (
 )
 from core import datetime
 from core.models import User
-from core.signals import *
 from contribution_plan.models import PaymentPlan
 from contribution_plan.utils import obtain_calcrule_params
 from invoice.services import BillService
@@ -51,13 +49,13 @@ class CapitationPaymentCalculationRule(AbsStrategy):
     type = "account_payable"
     sub_type = "third_party_payment"
 
-
-
     @classmethod
     def active_for_object(cls, instance, context, type="account_payable", sub_type="third_party_payment"):
-        return instance.__class__.__name__ == "PaymentPlan" \
-               and context in CONTEXTS \
-               and cls.check_calculation(instance)
+        return (
+            instance.__class__.__name__ == "PaymentPlan"
+            and context in CONTEXTS
+            and cls.check_calculation(instance)
+        )
 
     @classmethod
     def check_calculation(cls, instance):
@@ -171,7 +169,6 @@ class CapitationPaymentCalculationRule(AbsStrategy):
 
         return work_data
 
-
     @classmethod
     def _process_batch_payment(cls, instance, **kwargs):
         # get all valuated claims that should be evaluated
@@ -191,7 +188,7 @@ class CapitationPaymentCalculationRule(AbsStrategy):
             allocated_contribution = 0
 
         # generating capitation report
-        generate_capitation(instance, work_data, start_date, end_date, allocated_contribution)
+        generate_capitation(instance, start_date, end_date, allocated_contribution)
 
         # do the conversion based on those params after generating capitation
         batch_run, capitation_payment, capitation_hf_list, user = \
@@ -210,7 +207,10 @@ class CapitationPaymentCalculationRule(AbsStrategy):
                 payment_plan=instance,
                 context=context
             )
-
+        update_claim_indexed_remunerated(
+            work_data["claims"],
+            work_data["created_run"],
+        )
 
     @classmethod
     def _get_batch_run_parameters(cls, **kwargs):

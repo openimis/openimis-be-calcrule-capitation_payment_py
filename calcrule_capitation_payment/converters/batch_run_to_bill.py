@@ -12,7 +12,7 @@ class BatchRunToBillConverter(object):
         cls.build_thirdparty(health_facility, bill)
         cls.build_code(health_facility, payment_plan, batch_run, bill)
         cls.build_date_dates(batch_run, bill)
-        #cls.build_tax_analysis(bill)
+        # cls.build_tax_analysis(bill)
         cls.build_currency(bill)
         cls.build_status(bill)
         cls.build_terms(payment_plan, bill)
@@ -21,27 +21,30 @@ class BatchRunToBillConverter(object):
     @classmethod
     def build_subject(cls, batch_run, bill):
         bill["subject_id"] = batch_run.id
-        bill['subject_type'] = ContentType.objects.get_for_model(batch_run)
+        bill["subject_type"] = ContentType.objects.get_for_model(batch_run)
 
     @classmethod
     def build_thirdparty(cls, health_facility, bill):
         bill["thirdparty_id"] = health_facility.id
-        bill['thirdparty_type'] = ContentType.objects.get_for_model(health_facility)
+        bill["thirdparty_type"] = ContentType.objects.get_for_model(health_facility)
 
     @classmethod
     def build_code(cls, health_facility, payment_plan, batch_run, bill):
-        bill["code"] = f"" \
-            f"CP-{payment_plan.code}-{health_facility.code}" \
+        bill["code"] = (
+            f""
+            f"CP-{payment_plan.code}-{health_facility.code}"
             f"-{batch_run.run_year}-{batch_run.run_month}"
+        )
 
     @classmethod
     def build_date_dates(cls, batch_run, bill):
-        from core import datetime, datetimedelta
+        from core import datetimedelta
+
         bill["date_due"] = batch_run.run_date + datetimedelta(days=30)
         bill["date_bill"] = batch_run.run_date
         bill["date_valid_from"] = batch_run.run_date
         # TODO - explain/clarify meaning of 'validity to' of this field
-        #bill["date_valid_to"] = batch_run.expiry_date
+        # bill["date_valid_to"] = batch_run.expiry_date
 
     @classmethod
     def build_tax_analysis(cls, bill):
@@ -64,4 +67,6 @@ class BatchRunToBillConverter(object):
     def build_amounts(cls, line_item, bill_update):
         bill_update["amount_net"] = line_item["amount_net"]
         bill_update["amount_total"] = line_item["amount_total"]
-        bill_update["amount_discount"] = 0 if line_item["discount"] else line_item["discount"]
+        bill_update["amount_discount"] = (
+            0 if line_item["discount"] else line_item["discount"]
+        )
